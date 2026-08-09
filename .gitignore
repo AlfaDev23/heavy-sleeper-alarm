@@ -1,0 +1,25 @@
+# ── Artefatos de build do Arduino / arduino-cli ────────────────────
+build/
+*.elf
+*.bin
+*.hex
+*.map
+*.d
+*.o
+*.a
+
+# ── Configuracao local de ferramentas (caminhos absolutos da maquina) ──
+**/.claude/settings.local.json
+
+# ── Sistema operacional ────────────────────────────────────────────
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store
+
+# ── Editores ───────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*~
