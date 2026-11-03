@@ -221,8 +221,14 @@ static void drawClockAlarmBar() {
   lastSunrise = sunrise;
 }
 
+/* Texto da linha WI-FI. Um literal so, porque o tick compara ponteiros. */
+static const char* const PORTAL_TXT = "PORTAL ABERTO";
+static const char* netLineText() {
+  return netApActive() && !netConnected() ? PORTAL_TXT : netStateName();
+}
+
 static void drawNetLine() {
-  const char* n = netApActive() && !netConnected() ? "PORTAL ABERTO" : netStateName();
+  const char* n = netLineText();
   infoLine(190, "WI-FI", n, netConnected() ? C_OK : C_WARN);
   lastNetName = n;
 }
@@ -373,8 +379,7 @@ void uiClockTick() {
   }
 
   if (appSunriseActive() != lastSunrise) drawClockAlarmBar();
-  const char* n = netApActive() && !netConnected() ? "PORTAL ABERTO" : netStateName();
-  if (n != lastNetName) drawNetLine();
+  if (netLineText() != lastNetName) drawNetLine();
   if (wizStatusName() != lastWizName) drawWizLine();
   if (commActuatorOnline() != lastOnline) drawActuatorLine();
 }
