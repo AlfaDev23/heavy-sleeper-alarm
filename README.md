@@ -327,8 +327,9 @@ POST /api/wiz/test        pisca a lâmpada
   chave `touch_cal` da NVS força a rotina no próximo boot.
 - **Áudio:** se não sair som, confirme o `PIN_AMP_ENABLE` (IO4) indo a **LOW**
   durante o alarme — é ele que habilita o amplificador do board.
-- **LEDs Verde e Vermelho piscam junto com a UART** (IO16/IO22). É esperado,
-  não é defeito: ver o aviso em `WIRING.md` §2.5.
+- **O LED Vermelho pisca junto com a UART** (IO22, que é o RX2). É
+  esperado, não é defeito: ver o aviso em `WIRING.md` §2.5. Desde a v0.3 o
+  TX2 é o **IO27**, então o LED Verde (IO16) não pisca mais.
 - **Relógio:** com Wi-Fi a hora vem do NTP (`a.st1.ntp.br`) e é corrigida a
   cada 30 s. Sem internet continua por software e perde a hora ao
   reiniciar; para funcionar sem Wi-Fi, ainda vale um DS3231.

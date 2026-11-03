@@ -52,16 +52,19 @@
 #define PIN_AMP_ENABLE   4   // LOW = amplificador ligado, HIGH = mudo
 
 /* ── Comunicacao UART com o Actuator ESP32 ─────────────────────────
-   ATENCAO: IO16 = LED Verde e IO22 = LED Vermelho do board. Os LEDs
-   piscam junto com os dados da UART — comportamento aceito de proposito. */
-#define PIN_UART2_TX    16
+   IO27 e o CS do SPI periferico (SD/expansao) do board, nao usado pelo
+   firmware — foi escolhido por estar acessivel no header.
+   ATENCAO: IO22 = LED Vermelho do board. Ele pisca junto com os dados
+   recebidos pela UART — comportamento aceito de proposito. O IO16 (LED
+   Verde) deixou de ser TX na v0.3 e voltou a ficar livre. */
+#define PIN_UART2_TX    27
 #define PIN_UART2_RX    22
 #define UART2_BAUD      115200
 
 /* ── LED RGB do board (common anode: LOW = acende) ─────────────────
-   VERMELHO e VERDE estao ocupados pela UART2; so o AZUL esta livre.   */
+   So o VERMELHO segue ocupado pela UART2; VERDE e AZUL estao livres. */
 #define PIN_LED_RED     22   // == PIN_UART2_RX — nao usar como LED
-#define PIN_LED_GREEN   16   // == PIN_UART2_TX — nao usar como LED
+#define PIN_LED_GREEN   16   // LIVRE desde a v0.3 (nao era mais o TX2)
 #define PIN_LED_BLUE    17   // LIVRE: indicador de status do link UART
 
 /* ── Luz por MOSFET no Actuator — RESERVADA ─────────────────────────

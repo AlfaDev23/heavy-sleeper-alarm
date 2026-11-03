@@ -22,7 +22,7 @@ Esquema de ligação dos dois ESP32, dos MOSFETs de luz e vibração e do áudio
    speaker 8R ◄─────┤ conector SPEAKER do board  │
                     │  (DAC IO26 + amp IO4)      │
                     │                            │
-                    │ GPIO16 (TX2) ──────────────┼──┐
+                    │ GPIO27 (TX2) ──────────────┼──┐
                     │ GPIO22 (RX2) ◄─────────────┼─┐│
                     │ GND ───────────────────────┼┐││
                     └────────────────────────────┘│││
@@ -30,8 +30,8 @@ Esquema de ligação dos dois ESP32, dos MOSFETs de luz e vibração e do áudio
                     ┌────────────────────────────┐│││
                     │   ACTUATOR ESP32 (30 pinos)│││││
                     │                            ││││
-                    │ GPIO16 (RX2) ◄─────────────┼┼┼┘   TX -> RX
-                    │ GPIO17 (TX2) ──────────────┼┼┘    TX -> RX
+                    │ GPIO16 (RX2, D16) ◄────────┼┼┼┘   TX -> RX
+                    │ GPIO17 (TX2, D17) ─────────┼┼┘    TX -> RX
                     │ GND ───────────────────────┼┘     terra comum
                     │                            │
                     │ GPIO32 ──[220R]──► gate MOSFET LUZ (reservado)
@@ -88,31 +88,41 @@ SPI a 40 MHz no barramento **VSPI**, driver ST7789, 240×320, rotação 0.
 
 ### 2.4 SD card / SPI periférico (não usado pelo firmware)
 
-| Função | GPIO |
-|---|---|
-| CS_SD | 5 |
-| CS_SPI | 27 |
-| CLK | 18 |
-| MOSI | 23 |
-| MISO | 19 |
+| Função | GPIO | Observação |
+|---|---|---|
+| CS_SD | 5 | |
+| CS_SPI | 27 | **ocupado pela UART2 TX desde a v0.3** |
+| CLK | 18 | |
+| MOSI | 23 | |
+| MISO | 19 | |
 
-### 2.5 UART2 e LED RGB — **pinos compartilhados**
+> Como o firmware não usa SD nem o SPI periférico, o **IO27 foi
+> reaproveitado como TX da Serial2** — ele está acessível no header, o
+> antigo IO16 não estava. Se um dia entrar cartão SD no projeto, é este
+> conflito que precisa ser resolvido primeiro.
+
+### 2.5 UART2 e LED RGB — **RX compartilhado com o LED Vermelho**
 
 | Função | GPIO | Observação |
 |---|---|---|
-| UART2 TX | 16 | vai para o **RX (16)** do Actuator — é o LED **Verde** |
+| UART2 TX | 27 | vai para o **RX (16)** do Actuator — CS do SPI periférico, livre |
 | UART2 RX | 22 | vem do **TX (17)** do Actuator — é o LED **Vermelho** |
 | LED de status do link | 17 | LED **Azul**, livre |
 
-> ⚠️ **Aviso — UART e LED RGB dividem os mesmos pinos.**
+> ⚠️ **Aviso — o RX da UART divide o pino com o LED Vermelho.**
 > No E32R28T o LED RGB (common anode, LOW acende) está em
-> **IO22 = Vermelho, IO16 = Verde, IO17 = Azul**. Como IO16 e IO22 foram
-> escolhidos para a Serial2, os LEDs Vermelho e Verde **piscam junto com o
-> tráfego da UART**. Isso é uma decisão consciente do projeto, não um bug —
-> mas significa que **nada no firmware pode acionar IO16 ou IO22 como LED**.
-> Só o **LED Azul (IO17)** sobra, e o `comm.cpp` o usa como indicador:
-> apagado = link OK, piscada curta = linha recebida, piscar rápido =
-> Actuator offline.
+> **IO22 = Vermelho, IO16 = Verde, IO17 = Azul**. Como o IO22 é o RX da
+> Serial2, o LED Vermelho **pisca junto com os dados recebidos do
+> Actuator**. É uma decisão consciente do projeto, não um bug — mas
+> significa que **nada no firmware pode acionar IO22 como LED**.
+> O `comm.cpp` usa o **LED Azul (IO17)** como indicador: apagado = link OK,
+> piscada curta = linha recebida, piscar rápido = Actuator offline.
+
+> ℹ️ **Mudança da v0.3.** O TX era o IO16 (LED Verde), que **não está
+> acessível no header do board**. Ele foi movido para o **IO27**, e com
+> isso o **IO16 voltou a ficar livre** — o LED Verde já não pisca com a
+> UART e está disponível caso se queira um segundo indicador. Nenhum
+> código o aciona hoje.
 
 ### 2.6 Pinos que **não** podem virar saída
 
@@ -142,8 +152,8 @@ board usa IO1/IO3; não reutilize.
 
 | Função | GPIO | Observação |
 |---|---|---|
-| UART2 RX | 16 | vem do **TX (17)** do Display |
-| UART2 TX | 17 | vai para o **RX (16)** do Display |
+| UART2 RX | 16 (**D16**) | vem do **TX (IO27)** do Display |
+| UART2 TX | 17 (**D17**) | vai para o **RX (IO22)** do Display |
 | PWM luz | 32 | **reservado** (5 kHz, 8 bits, só com `USE_MOSFET_LIGHT`) |
 | PWM vibração | 33 | 200 Hz, 8 bits |
 | LED status | 2 | LED azul onboard |
@@ -156,14 +166,15 @@ em alta impedância no boot — o MOSFET não dispara sozinho ao ligar.
 ## 4. Link UART entre as duas placas
 
 ```
-DISPLAY GPIO16 (TX2) ─────────────► ACTUATOR GPIO16 (RX2)
-DISPLAY GPIO22 (RX2) ◄───────────── ACTUATOR GPIO17 (TX2)
+DISPLAY GPIO27 (TX2) ─────────────► ACTUATOR GPIO16 (RX2)   [D16]
+DISPLAY GPIO22 (RX2) ◄───────────── ACTUATOR GPIO17 (TX2)   [D17]
 DISPLAY GND         ──────────────  ACTUATOR GND
 ```
 
-> Os pinos do **Display** mudaram na v0.3 (eram 17/16). Os do **Actuator**
-> continuam 16/17 — aquela placa é um ESP32 devkit comum, sem LED RGB nesses
-> pinos.
+> Os pinos do **Display** mudaram na v0.3: o TX saiu do **IO16** para o
+> **IO27**, porque o IO16 não está acessível no header do board. O RX
+> continua no **IO22**. Os do **Actuator** continuam **D16/D17** — aquela
+> placa é um ESP32 devkit comum, sem LED RGB nesses pinos.
 
 - **TX de um vai no RX do outro** (cruzado). TX↔TX não comunica.
 - 115200 8N1.
@@ -276,7 +287,7 @@ que sobe junto com os estágios do alarme.
 ## 8. Checklist antes de ligar a fonte
 
 - [ ] GND comum entre os dois ESP32 e a fonte externa
-- [ ] TX↔RX cruzados: Display **16** → Actuator **16**, Actuator **17** →
+- [ ] TX↔RX cruzados: Display **27** → Actuator **16**, Actuator **17** →
       Display **22** (não TX↔TX)
 - [ ] `TOUCH_CS` = **33** batendo no `User_Setup.h` e no `config.h`
 - [ ] Biblioteca **XPT2046_Touchscreen** (Paul Stoffregen) instalada
