@@ -5,11 +5,12 @@
 
   Responsabilidades desta placa:
     - receber comandos por UART2 (115200) vindos do Display ESP32
-    - acionar a luz por PWM no GPIO32 (com rampa de 30 s)
     - acionar a vibracao por PWM no GPIO33 (ON / OFF / PULSE)
+    - (reservado) luz por PWM no GPIO32 com rampa de 30 s — so com
+      USE_MOSFET_LIGHT; desde a v0.4 a luz e a lampada WiZ do Display
     - responder ACK/NACK e STATUS, e vigiar o link com um watchdog
 
-  Os pinos 32 e 33 vao para os GATES dos MOSFETs atraves de um resistor
+  Os pinos 32 (reservado) e 33 vao para os GATES dos MOSFETs atraves de um resistor
   de 100-470 R. Detalhes em WIRING.md.
  ═══════════════════════════════════════════════════════════════════
 */

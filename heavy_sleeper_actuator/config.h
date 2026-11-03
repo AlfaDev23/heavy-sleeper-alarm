@@ -6,12 +6,20 @@
 
 #include <Arduino.h>
 
-#define FW_VERSION "0.2.0-alpha"
+#define FW_VERSION "0.4.0-alpha"
+
+/* ── Luz por MOSFET — RESERVADA ─────────────────────────────────────
+   Desde a v0.4 a luz do despertar e a lampada Wi-Fi WiZ, controlada pelo
+   Display. O canal de luz (GPIO32) ficou reservado para testes: com a
+   linha abaixo comentada o pino nao e configurado e o comando LIGHT:
+   responde NACK:LIGHT_DISABLED. Para reativar, descomente AQUI e no
+   config.h do Display.                                                 */
+// #define USE_MOSFET_LIGHT
 
 /* ── Pinos ──────────────────────────────────────────────────────── */
 #define PIN_UART2_RX 16   // recebe do Display ESP32
 #define PIN_UART2_TX 17   // envia ao Display ESP32
-#define PWM_LIGHT    32   // -> resistor 100-470R -> gate do MOSFET da luz
+#define PWM_LIGHT    32   // reservado: gate do MOSFET da luz (USE_MOSFET_LIGHT)
 #define PWM_VIB      33   // -> resistor 100-470R -> gate do MOSFET da vibracao
 #define LED_STATUS    2   // LED azul onboard
 

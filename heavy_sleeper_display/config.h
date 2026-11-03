@@ -7,7 +7,7 @@
 
 #include <Arduino.h>
 
-#define FW_VERSION "0.3.0-alpha"
+#define FW_VERSION "0.4.0-alpha"
 
 /* ═══════════════════════════════════════════════════════════════════
    MODO DEMO
@@ -25,6 +25,8 @@
   // levaria 10 minutos para chegar ao nivel maximo. Comente para
   // usar os tempos reais (2/5/10 min) mesmo em modo demo.
   #define DEMO_FAST_ESCALATE
+  // Em modo demo a hora NAO e sobrescrita pelo NTP, senao a demo perderia
+  // o horario 07:29 assim que o Wi-Fi conectasse.
 #endif
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -61,6 +63,20 @@
 #define PIN_LED_RED     22   // == PIN_UART2_RX — nao usar como LED
 #define PIN_LED_GREEN   16   // == PIN_UART2_TX — nao usar como LED
 #define PIN_LED_BLUE    17   // LIVRE: indicador de status do link UART
+
+/* ── Luz por MOSFET no Actuator — RESERVADA ─────────────────────────
+   Desde a v0.4 a luz do despertar e a lampada Wi-Fi WiZ. O canal de luz
+   por MOSFET (GPIO32 do Actuator) ficou reservado para testes: descomente
+   a linha abaixo AQUI e no config.h do Actuator para reativar o LIGHT:.  */
+// #define USE_MOSFET_LIGHT
+
+/* ── Sensor de luminosidade (futuro) ───────────────────────────────
+   LDR em divisor de tensao no IO35 (ADC1: funciona com o Wi-Fi ligado;
+   os pinos ADC2 nao funcionam com Wi-Fi). Descomente para que o modo
+   noturno AUTO passe a seguir a luz do ambiente em vez do horario.     */
+// #define PIN_LDR           35
+#define LDR_DARK_ADC      600    // abaixo disso = ambiente escuro (0-4095)
+#define LDR_HYST_ADC      150    // histerese para nao ficar alternando
 
 /* ── Backlight (PWM via LEDC) ─────────────────────────────────────── */
 #define PIN_BL        21   // backlight, PWM via LEDC
@@ -100,6 +116,55 @@
   #define SNOOZE_MS  (ALARM_SNOOZE_MIN     * 60000UL)
 #endif
 
+/* Desligar o alarme: segurar o botao DESLIGAR por este tempo. Tem que ser
+   MAIOR que TOUCH_LONGPRESS_MS, senao a soltura do dedo vira um toque. */
+#define DISMISS_HOLD_MS  2000UL
+
+/* Opcoes de tempo para resolver o desafio (s) e de duracao da rampa (min). */
+#define CHAL_TIME_OPTS   { 30, 60, 90, 120 }
+#define CHAL_TIME_COUNT  4
+#define RAMP_MIN_OPTS    { 5, 10, 15, 20 }
+#define RAMP_MIN_COUNT   4
+
+/* Em demo a rampa precisa caber no minuto entre 07:29 e 07:30. */
+#ifdef DEMO_FAST_ESCALATE
+  #define DEMO_RAMP_S    45
+#endif
+
+/* ═══════════════════════════════════════════════════════════════════
+   WI-FI, PORTAL E HORA PELA INTERNET
+   ═══════════════════════════════════════════════════════════════════ */
+#define NET_HOSTNAME       "despertador"   // http://despertador.local
+#define AP_SSID_PREFIX     "Despertador-"  // + 4 digitos do MAC
+#define AP_PASSWORD        "despertador"   // minimo 8 caracteres (WPA2)
+#define NET_CONNECT_TIMEOUT_MS  20000UL    // sem conectar -> abre o portal
+#define NET_RETRY_MS            60000UL    // nova tentativa com o portal aberto
+#define AP_AUTOCLOSE_MS         60000UL    // fecha o portal 1 min apos conectar
+#define AP_MANUAL_MS           600000UL    // portal aberto pela tela: 10 min
+#define NTP_SERVER_1       "a.st1.ntp.br"
+#define NTP_SERVER_2       "pool.ntp.org"
+#define TZ_DEFAULT         "<-03>3"        // Brasilia, sem horario de verao
+#define NTP_RESYNC_MS      30000UL         // copia a hora do sistema p/ o relogio
+
+/* ═══════════════════════════════════════════════════════════════════
+   LAMPADA WIZ (Philips / WiZ, protocolo UDP local na porta 38899)
+   ═══════════════════════════════════════════════════════════════════ */
+#define WIZ_PORT           38899
+#define WIZ_LOCAL_PORT     38900
+#define WIZ_DIM_MIN        10      // a WiZ nao aceita dimming abaixo de 10%
+#define WIZ_DIM_MAX        100
+/* Faixa de temperatura de cor. As lampadas COLORIDAS aceitam 2200-6500 K;
+   as "branco ajustavel" aceitam 2700-6500 K. Se a sua for branco
+   ajustavel e a rampa nao comecar, troque WIZ_TEMP_MIN para 2700.      */
+#define WIZ_TEMP_MIN       2200
+#define WIZ_TEMP_MAX       6500
+#define WIZ_ACK_TIMEOUT_MS 700     // sem resposta -> reenvia
+#define WIZ_RETRIES        3
+#define WIZ_PING_MS        30000UL // getPilot periodico (lampada online?)
+#define WIZ_ONLINE_MS      95000UL
+#define WIZ_RAMP_STEP_MS   3000UL  // intervalo entre passos da rampa
+#define WIZ_MAX_FOUND      4
+
 /* ═══════════════════════════════════════════════════════════════════
    COMUNICACAO
    ═══════════════════════════════════════════════════════════════════ */
@@ -114,6 +179,8 @@
 #define BL_STANDBY  77    // ~30%
 #define BL_CONFIG   204   // ~80%
 #define BL_ALARM    255   // 100%
+#define BL_NIGHT    6     // ~2%: quarto escuro
+#define NIGHT_PEEK_MS 10000UL   // toque no modo noturno mostra tudo por 10 s
 
 /* ═══════════════════════════════════════════════════════════════════
    PALETA (RGB 565)
@@ -131,6 +198,10 @@
 #define C_LINE    0x4208  // cinza dos separadores
 #define C_PANEL   0x0008  // azul bem escuro (fundo de painel)
 
+/* Modo noturno: vermelho apagado (nao ofusca e atrapalha menos o sono). */
+#define C_NIGHT     0x7800  // vermelho medio
+#define C_NIGHT_DIM 0x3000  // vermelho bem escuro
+
 /* ═══════════════════════════════════════════════════════════════════
    TELA
    ═══════════════════════════════════════════════════════════════════ */
@@ -145,8 +216,13 @@ enum Screen {
   SCREEN_SETTINGS,
   SCREEN_SET_TIME,
   SCREEN_ALARM_CONFIG,
-  SCREEN_ALARM_ACTIVE
+  SCREEN_NIGHT_CONFIG,     // modo noturno: AUTO / DIA / NOITE e horarios
+  SCREEN_NETWORK,          // Wi-Fi, portal e lampada WiZ
+  SCREEN_ALARM_RINGING,    // tocando: segure DESLIGAR ou soneca
+  SCREEN_ALARM_ACTIVE      // desafio cronometrado (silencio)
 };
+
+enum NightMode { NIGHT_AUTO = 0, NIGHT_FORCE_DAY, NIGHT_FORCE_NIGHT };
 
 enum DiffLevel { DIFF_EASY = 0, DIFF_MEDIUM, DIFF_HARD, DIFF_EXTREME };
 

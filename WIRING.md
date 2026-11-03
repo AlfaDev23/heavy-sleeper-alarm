@@ -2,6 +2,10 @@
 
 Esquema de ligação dos dois ESP32, dos MOSFETs de luz e vibração e do áudio.
 
+> **v0.4:** a luz do despertar agora é uma **lâmpada Wi-Fi WiZ**, comandada
+> pelo Display pela rede — não há fio. O MOSFET de luz (GPIO32 do Actuator)
+> ficou **reservado** (`USE_MOSFET_LIGHT` comentado); pode ficar sem montar.
+
 > **Regra que não pode ser esquecida:** os dois ESP32 e todas as fontes
 > precisam compartilhar o **GND**. Sem terra comum a UART não funciona e o
 > gate do MOSFET flutua.
@@ -30,7 +34,7 @@ Esquema de ligação dos dois ESP32, dos MOSFETs de luz e vibração e do áudio
                     │ GPIO17 (TX2) ──────────────┼┼┘    TX -> RX
                     │ GND ───────────────────────┼┘     terra comum
                     │                            │
-                    │ GPIO32 ──[220R]──► gate MOSFET LUZ
+                    │ GPIO32 ──[220R]──► gate MOSFET LUZ (reservado)
                     │ GPIO33 ──[220R]──► gate MOSFET VIBRAÇÃO
                     │ GPIO2  ──► LED azul onboard (status)
                     └────────────────────────────┘
@@ -115,6 +119,18 @@ SPI a 40 MHz no barramento **VSPI**, driver ST7789, 240×320, rotação 0.
 `IO34` (ADC de bateria), `IO35` (pino de expansão), `IO36` (touch IRQ),
 `IO39` (touch MISO) — são **input only** no ESP32.
 
+**Sensor de luz (opcional, futuro):** o `IO35` está reservado para um LDR do
+modo noturno automático (`PIN_LDR` no `config.h`). Ele é ADC1, que continua
+funcionando com o Wi-Fi ligado — os pinos ADC2 (IO0, 2, 4, 12–15, 25–27)
+**não** leem analógico com o Wi-Fi ativo.
+
+```
+3V3 ──[LDR]──┬──[10k]── GND
+             └────────► IO35
+```
+
+Mais luz → menor resistência do LDR → tensão maior no IO35.
+
 ### 2.7 Pinos reservados / perigosos
 
 `IO0` (botão BOOT), `IO1` (TX0) e `IO3` (RX0) — o conector UART físico do
@@ -128,7 +144,7 @@ board usa IO1/IO3; não reutilize.
 |---|---|---|
 | UART2 RX | 16 | vem do **TX (17)** do Display |
 | UART2 TX | 17 | vai para o **RX (16)** do Display |
-| PWM luz | 32 | 5 kHz, 8 bits |
+| PWM luz | 32 | **reservado** (5 kHz, 8 bits, só com `USE_MOSFET_LIGHT`) |
 | PWM vibração | 33 | 200 Hz, 8 bits |
 | LED status | 2 | LED azul onboard |
 

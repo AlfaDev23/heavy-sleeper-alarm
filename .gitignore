@@ -23,3 +23,7 @@ $RECYCLE.BIN/
 .idea/
 *.swp
 *~
+
+# ── Teste no PC (gerados pelo tests/host/run.sh) ─────────────────
+tests/host/src/
+tests/host/build/

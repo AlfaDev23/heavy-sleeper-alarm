@@ -17,11 +17,13 @@ static volatile bool gRamping      = false;
 /* ── Vibracao ───────────────────────────────────────────────────── */
 static volatile int gVibMode = VIB_OFF;
 
-/* Aplica a porcentagem no PWM da luz. */
+/* Aplica a porcentagem no PWM da luz (sem USE_MOSFET_LIGHT so guarda o valor). */
 static void writeLight(int percent) {
   percent = constrain(percent, 0, 100);
   gLightCurrent = percent;
+#ifdef USE_MOSFET_LIGHT
   pwmWrite(PWM_LIGHT, LEDC_CH_LIGHT, map(percent, 0, 100, 0, 255));
+#endif
 }
 
 /*
@@ -77,12 +79,18 @@ static void vibTask(void* arg) {
 
 /* Configura os dois canais PWM e sobe as tasks. */
 void actuatorBegin() {
+#ifdef USE_MOSFET_LIGHT
   pwmAttach(PWM_LIGHT, LEDC_CH_LIGHT, LIGHT_FREQ, LIGHT_RES);
+#endif
   pwmAttach(PWM_VIB,   LEDC_CH_VIB,   VIB_FREQ,   VIB_RES);
   writeLight(0);
   pwmWrite(PWM_VIB, LEDC_CH_VIB, 0);
 
+#ifdef USE_MOSFET_LIGHT
   xTaskCreatePinnedToCore(lightTask, "light", 2048, NULL, 1, NULL, 1);
+#else
+  (void)lightTask;   // canal reservado: a task da rampa nao sobe
+#endif
   xTaskCreatePinnedToCore(vibTask,   "vib",   2048, NULL, 1, NULL, 1);
 }
 

@@ -33,10 +33,14 @@ void parseCommand(String cmd) {
   Serial.printf("[COMM] rx: %s\n", cmd.c_str());
 
   if (cmd.startsWith("LIGHT:")) {
+#ifdef USE_MOSFET_LIGHT
     int pct = cmd.substring(6).toInt();
     pct = constrain(pct, 0, 100);
     setLight(pct);
     Serial2.printf("ACK:LIGHT:%d\n", pct);
+#else
+    Serial2.print(F("NACK:LIGHT_DISABLED\n"));   // luz agora e a lampada WiZ
+#endif
 
   } else if (cmd == "VIB:ON") {
     setVib(VIB_ON);
