@@ -401,6 +401,16 @@ void challengeEarlyTap() {
   Serial.println(F("[CHAL] queimou a largada"));
 }
 
+/* Acabou o tempo para resolver (definido pelo .ino): conta como erro. */
+void challengeTimeout() {
+  if (ch.phase == CHP_RIGHT || ch.phase == CHP_WRONG) return;
+  ch.phase    = CHP_WRONG;
+  ch.timedOut = true;
+  ch.phaseMs  = millis();
+  ch.redraw   = true;
+  Serial.println(F("[CHAL] tempo do desafio esgotado"));
+}
+
 /* Registra o toque no botao idx e avalia acerto/erro. */
 void challengeTouchIndex(int idx) {
   if (idx < 0 || idx >= ch.optCount) return;

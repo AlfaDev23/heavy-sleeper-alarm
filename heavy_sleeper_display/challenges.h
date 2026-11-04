@@ -47,6 +47,7 @@ struct Challenge {
   int  highlight;                  // botao destacado agora (-1 = nenhum)
 
   bool redraw;                     // ui precisa redesenhar
+  bool timedOut;                   // CHP_WRONG porque acabou o tempo do desafio
 };
 
 void challengeInit();                        // semeia o gerador aleatorio
@@ -54,6 +55,7 @@ void challengeStart(int type, int level);    // sorteia e arma um novo desafio
 void challengeUpdate();                      // avanca as fases (chame no loop)
 void challengeTouchIndex(int idx);           // registra toque no botao idx
 void challengeEarlyTap();                    // toque antes do estimulo (reacao)
+void challengeTimeout();                     // acabou o tempo total -> CHP_WRONG
 
 const Challenge& challengeCurrent();
 void challengeClearRedraw();                 // ui avisa que ja redesenhou

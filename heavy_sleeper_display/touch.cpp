@@ -33,7 +33,15 @@
 /* ── SPI dedicado do touch ─────────────────────────────────────────── */
 static SPIClass touchSPI(HSPI);
 
-XPT2046_Touchscreen touch(PIN_TOUCH_CS, PIN_TOUCH_IRQ);
+/*
+ * SEM o pino de IRQ, de proposito (v0.4).
+ * Errata do ESP32: com o Wi-Fi ligado, IO36 e IO39 podem receber pulsos
+ * falsos de ~80 ns, entao a interrupcao FALLING no IRQ (IO36) nao e confiavel.
+ * Sem IRQ a biblioteca le o XPT2046 por SPI a cada touchUpdate() (20 ms),
+ * o que da no mesmo para o despertador. O fio do IRQ pode continuar ligado.
+ * (Nao era esta a causa do reinicio TG1WDT ao ligar o Wi-Fi: ver net.cpp.)
+ */
+XPT2046_Touchscreen touch(PIN_TOUCH_CS);
 
 /* ── Calibracao corrente ───────────────────────────────────────────── */
 #define CAL_MAGIC     0xCA00   // marca os 8 bits altos de cal[4]

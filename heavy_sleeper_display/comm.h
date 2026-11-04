@@ -6,7 +6,7 @@
 
 #include "config.h"
 
-void commBegin();                 // Serial2 em TX=IO16 / RX=IO22 + LED de status
+void commBegin();                 // Serial2 em TX=IO27 / RX=IO22 + LED de status
 void commPoll();                  // le respostas e atualiza o LED (chame no loop)
 
 void commSendLight(int percent);  // LIGHT:0-100

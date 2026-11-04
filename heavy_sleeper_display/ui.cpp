@@ -4,6 +4,9 @@
  * Cada tela, ao ser desenhada, registra seus botoes em curBtns[]. O hit-test
  * e o piscar de feedback trabalham em cima dessa tabela, entao layout e
  * area clicavel nunca saem de sincronia.
+ *
+ * Rotulos de botao sao guardados por PONTEIRO (o piscar redesenha o botao
+ * depois). Por isso todo rotulo montado com snprintf usa um buffer static.
  */
 #include "ui.h"
 #include "touch.h"
@@ -12,6 +15,10 @@
 #include "challenges.h"
 #include "comm.h"
 #include "audio.h"
+#include "net.h"
+#include "wiz.h"
+#include "night.h"
+#include "app.h"
 #include "pwm.h"
 
 TFT_eSPI tft = TFT_eSPI();
@@ -28,6 +35,7 @@ struct UiButton {
 static UiButton curBtns[MAX_BTNS];
 static int      curBtnCount = 0;
 static Screen   curScreen   = SCREEN_CLOCK;
+static bool     nightOn     = false;
 
 /* Estado do piscar de feedback. */
 static int           flashIdx   = -1;
@@ -36,6 +44,15 @@ static unsigned long flashUntil = 0;
 /* Cache para redesenhar so o que mudou na tela do relogio. */
 static int  lastMin = -1, lastHour = -1, lastSec = -1;
 static bool lastOnline = false;
+static const char* lastNetName = NULL;
+static const char* lastWizName = NULL;
+static bool lastSunrise = false;
+
+/* Caches das telas de alarme (zerados sempre que a tela e redesenhada). */
+static char ringLastLine[42] = "";
+static int  ringLastMin      = -1;
+static int  holdLastPx       = -1;
+static char chalLastLine[42] = "";
 
 /* ───────────────────────── primitivas ──────────────────────────── */
 
@@ -61,6 +78,13 @@ static void addButton(int x, int y, int w, int h, const char* label,
   u.b.x = x; u.b.y = y; u.b.w = w; u.b.h = h; u.b.label = label;
   u.bg = bg; u.border = border; u.fg = fg; u.font = font; u.action = action;
   drawButton(u);
+}
+
+/* Botao de opcao exclusiva (selecionado = verde). */
+static void addChoice(int x, int y, int w, int h, const char* label,
+                      int action, bool sel) {
+  addButton(x, y, w, h, label, action,
+            sel ? C_BTN_SEL : C_BTN, sel ? C_OK : C_LINE);
 }
 
 /* Escreve um texto alinhado a esquerda. */
@@ -111,6 +135,24 @@ static void drawTitleBar(const char* title) {
   tft.drawFastHLine(0, 30, SCR_W, C_LINE);
 }
 
+/* Uma linha "rotulo ......... valor". */
+static void infoLine(int y, const char* label, const char* value, uint16_t vcolor) {
+  tft.fillRect(0, y, SCR_W, 18, C_BG);
+  textAt(8, y, label, C_SUBTEXT, C_BG, 2);
+  tft.setTextDatum(TR_DATUM);
+  tft.setTextColor(vcolor, C_BG);
+  tft.drawString(value, SCR_W - 8, y, 2);
+  tft.setTextDatum(TL_DATUM);
+}
+
+/* Barra horizontal de progresso (0..1). */
+static void drawProgress(int x, int y, int w, int h, float p, uint16_t color) {
+  p = constrain(p, 0.0f, 1.0f);
+  int fw = (int)(w * p);
+  tft.fillRect(x, y, fw, h, color);
+  tft.fillRect(x + fw, y, w - fw, h, C_LINE);
+}
+
 /* ─────────────────────────── init ──────────────────────────────── */
 
 /* Inicia a tela e o PWM do backlight. */
@@ -129,6 +171,9 @@ void uiBegin() {
 void uiSetBacklight(uint8_t duty) {
   pwmWrite(PIN_BL, LEDC_CH_BL, duty);
 }
+
+void uiSetNight(bool night) { nightOn = night; }
+bool uiIsNight()            { return nightOn; }
 
 /* ─────────────────────── tela do relogio ───────────────────────── */
 
@@ -149,19 +194,21 @@ static void drawClockTime() {
   tft.setTextDatum(TL_DATUM);
 }
 
-/* Faixa com o horario do alarme (ou aviso de disparo). */
-void uiClockAlarmBar(bool ringing, bool flash) {
-  uint16_t bg = (ringing && flash) ? C_DANGER : C_PANEL;
+/* Faixa com o horario do alarme e de quando a luz comeca a acender. */
+static void drawClockAlarmBar() {
+  bool sunrise = appSunriseActive();
+  uint16_t bg = sunrise ? 0x4A00 : C_PANEL;       // ambar escuro no amanhecer
   tft.fillRect(0, 115, SCR_W, 30, bg);
 
-  char buf[36];
-  if (ringing) {
-    snprintf(buf, sizeof(buf), "%s",
-             flash ? "!!! ALARME DISPARANDO !!!" : ">> Resolva o desafio <<");
-    tft.setTextColor(C_TEXT, bg);
-  } else if (settings.almEnabled) {
-    snprintf(buf, sizeof(buf), "Alarme %02d:%02d  [ATIVO]",
+  char buf[40];
+  if (sunrise) {
+    snprintf(buf, sizeof(buf), "Amanhecendo... alarme %02d:%02d",
              settings.almHour, settings.almMin);
+    tft.setTextColor(TFT_YELLOW, bg);
+  } else if (settings.almEnabled) {
+    int luz = (settings.almHour * 60 + settings.almMin - settings.rampMin + 1440) % 1440;
+    snprintf(buf, sizeof(buf), "Alarme %02d:%02d  luz %02d:%02d",
+             settings.almHour, settings.almMin, luz / 60, luz % 60);
     tft.setTextColor(C_ACCENT, bg);
   } else {
     snprintf(buf, sizeof(buf), "ALARME DESATIVADO");
@@ -171,34 +218,48 @@ void uiClockAlarmBar(bool ringing, bool flash) {
   tft.drawString(buf, SCR_W / 2, 130, 2);
   tft.setTextDatum(TL_DATUM);
   tft.drawFastHLine(0, 145, SCR_W, C_LINE);
+  lastSunrise = sunrise;
 }
 
-/* Uma linha "rotulo ......... valor" do painel de informacoes. */
-static void infoLine(int y, const char* label, const char* value, uint16_t vcolor) {
-  tft.fillRect(0, y, SCR_W, 18, C_BG);
-  textAt(8, y, label, C_SUBTEXT, C_BG, 2);
-  tft.setTextDatum(TR_DATUM);
-  tft.setTextColor(vcolor, C_BG);
-  tft.drawString(value, SCR_W - 8, y, 2);
-  tft.setTextDatum(TL_DATUM);
+/* Texto da linha WI-FI. Um literal so, porque o tick compara ponteiros. */
+static const char* const PORTAL_TXT = "PORTAL ABERTO";
+static const char* netLineText() {
+  return netApActive() && !netConnected() ? PORTAL_TXT : netStateName();
 }
 
-/* Painel com o resumo da configuracao e o estado do Actuator. */
-static void drawClockInfo() {
-  char buf[16];
-  infoLine(150, "DESAFIO",  typeName(settings.diffType),  C_TEXT);
-  infoLine(170, "NIVEL",    diffName(settings.diffLevel), C_TEXT);
+static void drawNetLine() {
+  const char* n = netLineText();
+  infoLine(190, "WI-FI", n, netConnected() ? C_OK : C_WARN);
+  lastNetName = n;
+}
 
-  snprintf(buf, sizeof(buf), "%d%%", settings.lightPct);
-  infoLine(190, "LUZ", buf, C_TEXT);
+static void drawWizLine() {
+  const char* w = wizStatusName();
+  infoLine(210, "LAMPADA", w, wizOnline() ? C_OK : C_WARN);
+  lastWizName = w;
+}
 
-  static const char* VIBN[3] = { "OFF", "FRACA", "FORTE" };
-  infoLine(210, "VIBRACAO", VIBN[constrain(settings.vibMode, 0, 2)], C_TEXT);
-
+static void drawActuatorLine() {
   bool online = commActuatorOnline();
   infoLine(230, "ATUADOR", online ? "ONLINE" : "OFFLINE",
            online ? C_OK : C_DANGER);
   lastOnline = online;
+}
+
+/* Painel com o resumo da configuracao e o estado das conexoes. */
+static void drawClockInfo() {
+  static char d[28];
+  snprintf(d, sizeof(d), "%s - %s", typeName(settings.diffType),
+           diffName(settings.diffLevel));
+  infoLine(150, "DESAFIO", d, C_TEXT);
+
+  char t[16];
+  snprintf(t, sizeof(t), "%d s", settings.chalTimeS);
+  infoLine(170, "RESOLVER EM", t, C_TEXT);
+
+  drawNetLine();
+  drawWizLine();
+  drawActuatorLine();
 }
 
 /* Rodape com as barras de estimulo e a versao. */
@@ -215,13 +276,16 @@ static void drawClockFooter() {
   textAt(8, 288, "VIB",  C_SUBTEXT, C_PANEL, 1);
   drawLevelBar(46, 287, settings.vibMode * 4, C_WARN);
 
-  char buf[48];
-  snprintf(buf, sizeof(buf), "HeavySleep %s | toque longo = ajustes", FW_VERSION);
+  char buf[56];
+  snprintf(buf, sizeof(buf), "rampa %d min", settings.rampMin);
+  textAt(150, 272, buf, C_SUBTEXT, C_PANEL, 1);
+
+  snprintf(buf, sizeof(buf), "v%s | toque longo = ajustes", FW_VERSION);
   textAt(8, 306, buf, C_LINE, C_PANEL, 1);
 }
 
-/* Tela principal completa. */
-static void drawClockScreen() {
+/* Tela principal completa (tema normal). */
+static void drawDayClock() {
   tft.fillScreen(C_BG);
 
   // Cabecalho — tocar aqui abre a configuracao do alarme.
@@ -239,20 +303,66 @@ static void drawClockScreen() {
 
   drawClockTime();
   tft.drawFastHLine(0, 114, SCR_W, C_LINE);
-  uiClockAlarmBar(false, false);
+  drawClockAlarmBar();
   drawClockInfo();
   drawClockFooter();
 
   // Areas clicaveis invisiveis sobre o cabecalho e sobre a hora.
   addHitArea(0,  0, SCR_W, 36, ACT_OPEN_ALARM_CFG);
   addHitArea(0, 38, SCR_W, 76, ACT_OPEN_SET_TIME);
+}
 
+/* ── tema noturno: so a hora, grande e vermelha ───────────────────
+   Horas e minutos empilhados em fonte 7 (7 segmentos) com escala 2:
+   cada par de digitos tem ~128 x 96 px e da para ler da cama.        */
+static void drawNightTime() {
+  char hh[4], mm[4];
+  snprintf(hh, sizeof(hh), "%02d", rtc.hour);
+  snprintf(mm, sizeof(mm), "%02d", rtc.minute);
+  tft.fillRect(0, 24, SCR_W, 228, C_BG);
+  tft.setTextSize(2);
+  tft.setTextDatum(TC_DATUM);
+  tft.setTextColor(C_NIGHT, C_BG);
+  tft.drawString(hh, SCR_W / 2, 30, 7);
+  tft.drawString(mm, SCR_W / 2, 146, 7);
+  tft.setTextSize(1);
+  tft.setTextDatum(TL_DATUM);
+}
+
+static void drawNightAlarmLine() {
+  char buf[32];
+  if (settings.almEnabled)
+    snprintf(buf, sizeof(buf), "alarme %02d:%02d", settings.almHour, settings.almMin);
+  else
+    snprintf(buf, sizeof(buf), "alarme desligado");
+  tft.fillRect(0, 268, SCR_W, 30, C_BG);
+  textCentered(274, buf, C_NIGHT_DIM, C_BG, 2);
+}
+
+static void drawNightClock() {
+  tft.fillScreen(C_BG);
+  drawNightTime();
+  drawNightAlarmLine();
+  addHitArea(0, 0, SCR_W, SCR_H, ACT_NIGHT_PEEK);   // qualquer toque espia
+}
+
+static void drawClockScreen() {
+  if (nightOn) drawNightClock();
+  else         drawDayClock();
   lastHour = rtc.hour; lastMin = rtc.minute; lastSec = rtc.second;
 }
 
 /* Atualiza apenas o que muda a cada segundo na tela do relogio. */
 void uiClockTick() {
   if (curScreen != SCREEN_CLOCK) return;
+
+  if (nightOn) {
+    if (rtc.hour != lastHour || rtc.minute != lastMin) {
+      drawNightTime();
+      lastHour = rtc.hour; lastMin = rtc.minute;
+    }
+    return;
+  }
 
   if (rtc.hour != lastHour || rtc.minute != lastMin) {
     drawClockTime();
@@ -268,27 +378,24 @@ void uiClockTick() {
     lastSec = rtc.second;
   }
 
-  bool online = commActuatorOnline();
-  if (online != lastOnline) {
-    infoLine(230, "ATUADOR", online ? "ONLINE" : "OFFLINE",
-             online ? C_OK : C_DANGER);
-    lastOnline = online;
-  }
+  if (appSunriseActive() != lastSunrise) drawClockAlarmBar();
+  if (netLineText() != lastNetName) drawNetLine();
+  if (wizStatusName() != lastWizName) drawWizLine();
+  if (commActuatorOnline() != lastOnline) drawActuatorLine();
 }
 
 /* ───────────────────────── hub de ajustes ──────────────────────── */
 
-/* Menu com os atalhos de configuracao. */
 static void drawSettingsScreen() {
   tft.fillScreen(C_BG);
   drawTitleBar("AJUSTES");
 
-  addButton(20,  60, 200, 50, "CONFIG. ALARME", ACT_GO_ALARM_CFG, C_BTN, C_ACCENT);
-  addButton(20, 120, 200, 50, "AJUSTAR HORA",   ACT_GO_SET_TIME,  C_BTN, C_ACCENT);
-  addButton(20, 180, 200, 50, "TESTAR ALARME",  ACT_TEST_ALARM,   C_BTN, C_WARN);
-  addButton(20, 250, 200, 50, "VOLTAR",         ACT_BACK,         C_HEADER, C_LINE);
-
-  textCentered(238, "dispara o alarme agora", C_SUBTEXT, C_BG, 1);
+  addButton(20,  40, 200, 40, "CONFIG. ALARME", ACT_GO_ALARM_CFG, C_BTN, C_ACCENT);
+  addButton(20,  86, 200, 40, "MODO NOTURNO",   ACT_GO_NIGHT_CFG, C_BTN, C_ACCENT);
+  addButton(20, 132, 200, 40, "REDE E LAMPADA", ACT_GO_NETWORK,   C_BTN, C_ACCENT);
+  addButton(20, 178, 200, 40, "AJUSTAR HORA",   ACT_GO_SET_TIME,  C_BTN, C_ACCENT);
+  addButton(20, 224, 200, 40, "TESTAR ALARME",  ACT_TEST_ALARM,   C_BTN, C_WARN);
+  addButton(20, 274, 200, 40, "VOLTAR",         ACT_BACK,         C_HEADER, C_LINE);
 }
 
 /* ──────────────────── configuracao do alarme ───────────────────── */
@@ -306,59 +413,169 @@ static void spinRow(int y, int h, const char* label, const char* value,
   addButton(196, y, 34, h, "+", actUp, C_BTN, C_LINE, C_TEXT, 4);
 }
 
-/* Tela de configuracao completa do alarme. */
+/* Valor grande centralizado em uma caixa. */
+static void valueBox(int cx, int y, int w, int h, const char* v) {
+  tft.fillRect(cx - w / 2, y, w, h, C_BG);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(C_TEXT, C_BG);
+  tft.drawString(v, cx, y + h / 2, 4);
+  tft.setTextDatum(TL_DATUM);
+}
+
 static void drawAlarmConfigScreen() {
   tft.fillScreen(C_BG);
   drawTitleBar("CONFIG. ALARME");
 
+  // Hora e minuto na mesma linha:  [-] 07 [+]  :  [-] 00 [+]
   char buf[8];
+  addButton(6,   34, 30, 34, "-", ACT_ALM_H_DN, C_BTN, C_LINE, C_TEXT, 4);
   snprintf(buf, sizeof(buf), "%02d", settings.almHour);
-  spinRow(34, 32, "HORA", buf, ACT_ALM_H_DN, ACT_ALM_H_UP);
-
+  valueBox(57, 34, 38, 34, buf);
+  addButton(78,  34, 30, 34, "+", ACT_ALM_H_UP, C_BTN, C_LINE, C_TEXT, 4);
+  valueBox(120, 34, 20, 34, ":");
+  addButton(132, 34, 30, 34, "-", ACT_ALM_M_DN, C_BTN, C_LINE, C_TEXT, 4);
   snprintf(buf, sizeof(buf), "%02d", settings.almMin);
-  spinRow(70, 32, "MIN", buf, ACT_ALM_M_DN, ACT_ALM_M_UP);
+  valueBox(183, 34, 38, 34, buf);
+  addButton(204, 34, 30, 34, "+", ACT_ALM_M_UP, C_BTN, C_LINE, C_TEXT, 4);
 
-  textAt(6, 112, "ALARME", C_SUBTEXT, C_BG, 2);
-  addButton(96, 106, 134, 28, settings.almEnabled ? "ATIVO" : "INATIVO",
-            ACT_ALM_TOGGLE,
-            settings.almEnabled ? C_BTN_SEL : C_BTN,
-            settings.almEnabled ? C_OK : C_LINE);
+  textAt(6, 78, "ALARME", C_SUBTEXT, C_BG, 2);
+  addChoice(96, 72, 138, 28, settings.almEnabled ? "ATIVO" : "INATIVO",
+            ACT_ALM_TOGGLE, settings.almEnabled);
 
-  // Dificuldade — 4 opcoes exclusivas.
-  textAt(6, 138, "DIFICULDADE", C_SUBTEXT, C_BG, 1);
+  textAt(6, 104, "DIFICULDADE", C_SUBTEXT, C_BG, 1);
   static const char* DL[4] = { "FACIL", "MEDIO", "DIFIC", "EXTR" };
-  for (int i = 0; i < 4; i++) {
-    bool sel = (settings.diffLevel == i);
-    addButton(6 + i * 58, 152, 54, 28, DL[i], ACT_DIFF_0 + i,
-              sel ? C_BTN_SEL : C_BTN, sel ? C_OK : C_LINE);
-  }
+  for (int i = 0; i < 4; i++)
+    addChoice(6 + i * 58, 116, 54, 28, DL[i], ACT_DIFF_0 + i, settings.diffLevel == i);
 
-  // Tipo de desafio — 4 opcoes exclusivas.
-  textAt(6, 184, "DESAFIO", C_SUBTEXT, C_BG, 1);
+  textAt(6, 148, "DESAFIO", C_SUBTEXT, C_BG, 1);
   static const char* TL_[4] = { "MAT", "MEM", "SEQ", "REA" };
-  for (int i = 0; i < 4; i++) {
-    bool sel = (settings.diffType == i);
-    addButton(6 + i * 58, 198, 54, 28, TL_[i], ACT_TYPE_0 + i,
-              sel ? C_BTN_SEL : C_BTN, sel ? C_OK : C_LINE);
-  }
+  for (int i = 0; i < 4; i++)
+    addChoice(6 + i * 58, 160, 54, 28, TL_[i], ACT_TYPE_0 + i, settings.diffType == i);
 
   snprintf(buf, sizeof(buf), "%d%%", settings.lightPct);
-  spinRow(230, 28, "LUZ", buf, ACT_LIGHT_DN, ACT_LIGHT_UP);
+  spinRow(192, 28, "LUZ MAX", buf, ACT_LIGHT_DN, ACT_LIGHT_UP);
 
-  static const char* VIBN[3] = { "OFF", "FRACA", "FORTE" };
-  textAt(6, 268, "VIB", C_SUBTEXT, C_BG, 2);
-  addButton(96, 262, 134, 28, VIBN[constrain(settings.vibMode, 0, 2)],
-            ACT_VIB_CYCLE,
-            settings.vibMode ? C_BTN_SEL : C_BTN,
-            settings.vibMode ? C_OK : C_LINE);
+  static const char* VIBN[3] = { "VIB: OFF", "VIB: FRACA", "VIB: FORTE" };
+  addChoice(6, 224, 112, 28, VIBN[constrain(settings.vibMode, 0, 2)],
+            ACT_VIB_CYCLE, settings.vibMode != VIB_MODE_OFF);
 
-  addButton(6,   292, 112, 26, "SALVAR", ACT_SAVE, C_BTN_SEL, C_OK);
-  addButton(122, 292, 112, 26, "VOLTAR", ACT_BACK, C_HEADER, C_LINE);
+  static char rampLbl[20];
+  snprintf(rampLbl, sizeof(rampLbl), "RAMPA %d min", settings.rampMin);
+  addButton(122, 224, 112, 28, rampLbl, ACT_RAMP_CYCLE, C_BTN, TFT_YELLOW);
+
+  static char chLbl[32];
+  snprintf(chLbl, sizeof(chLbl), "TEMPO P/ RESOLVER: %d s", settings.chalTimeS);
+  addButton(6, 256, 228, 28, chLbl, ACT_CHTIME_CYCLE, C_BTN, C_ACCENT);
+
+  addButton(6,   290, 112, 28, "SALVAR", ACT_SAVE, C_BTN_SEL, C_OK);
+  addButton(122, 290, 112, 28, "VOLTAR", ACT_BACK, C_HEADER, C_LINE);
+}
+
+/* ──────────────────────── modo noturno ─────────────────────────── */
+
+/* Linha "rotulo [-] HH:MM [+]" (passos de 30 min). */
+static void timeRow(int y, int h, const char* label, int minuteOfDay,
+                    int actDown, int actUp) {
+  textAt(6, y + (h - 16) / 2, label, C_SUBTEXT, C_BG, 2);
+  addButton(90, y, 32, h, "-", actDown, C_BTN, C_LINE, C_TEXT, 4);
+  char buf[16];
+  snprintf(buf, sizeof(buf), "%02d:%02d", minuteOfDay / 60, minuteOfDay % 60);
+  valueBox(161, y, 74, h, buf);
+  addButton(200, y, 34, h, "+", actUp, C_BTN, C_LINE, C_TEXT, 4);
+}
+
+static void drawNightConfigScreen() {
+  tft.fillScreen(C_BG);
+  drawTitleBar("MODO NOTURNO");
+
+  textAt(6, 40, "MODO", C_SUBTEXT, C_BG, 1);
+  static const char* NM[3] = { "AUTO", "DIA", "NOITE" };
+  for (int i = 0; i < 3; i++)
+    addChoice(6 + i * 77, 52, 74, 36, NM[i], ACT_NIGHT_MODE_0 + i,
+              settings.nightMode == i);
+
+  timeRow(102, 36, "COMECA",  settings.nightStart, ACT_NIGHT_S_DN, ACT_NIGHT_S_UP);
+  timeRow(146, 36, "TERMINA", settings.nightEnd,   ACT_NIGHT_E_DN, ACT_NIGHT_E_UP);
+
+  bool active = nightShouldBeActive();
+  char buf[40];
+  snprintf(buf, sizeof(buf), "Agora: %s", active ? "MODO NOTURNO" : "MODO DIA");
+  textCentered(196, buf, active ? C_NIGHT : C_ACCENT, C_BG, 2);
+#ifdef PIN_LDR
+  textCentered(216, "AUTO segue o sensor de luz (IO35)", C_SUBTEXT, C_BG, 1);
+#else
+  textCentered(216, "AUTO segue o horario acima", C_SUBTEXT, C_BG, 1);
+#endif
+  textCentered(232, "A noite: so a hora, em vermelho.", C_SUBTEXT, C_BG, 1);
+  textCentered(246, "Um toque mostra tudo por 10 s.", C_SUBTEXT, C_BG, 1);
+
+  addButton(6,   276, 112, 36, "SALVAR", ACT_SAVE, C_BTN_SEL, C_OK);
+  addButton(122, 276, 112, 36, "VOLTAR", ACT_BACK, C_HEADER, C_LINE);
+}
+
+/* ─────────────────────── rede e lampada ────────────────────────── */
+
+static char netSig[96] = "";      // "assinatura" do que esta na tela
+
+/* Monta um texto que muda sempre que algo exibido muda. */
+static void networkSignature(char* out, size_t n) {
+  snprintf(out, n, "%d|%d|%d|%s|%s|%d|%d|%s", netState(), netApActive(),
+           netApClients(), netIp().toString().c_str(), wizTargetIp(),
+           wizOnline(), wizDiscovering(), rtc.synced ? "s" : "m");
+}
+
+static void drawNetworkScreen() {
+  tft.fillScreen(C_BG);
+  drawTitleBar("REDE E LAMPADA");
+
+  char buf[40];
+  infoLine(36, "WI-FI", netStateName(), netConnected() ? C_OK : C_WARN);
+  char ssid[34];
+  if (!netcfg.ssid[0])               snprintf(ssid, sizeof(ssid), "(nenhuma)");
+  else if (strlen(netcfg.ssid) > 20) snprintf(ssid, sizeof(ssid), "%.18s..", netcfg.ssid);
+  else                               snprintf(ssid, sizeof(ssid), "%s", netcfg.ssid);
+  infoLine(54, "REDE", ssid, C_TEXT);
+  infoLine(72, "IP", netConnected() ? netIp().toString().c_str() : "--", C_TEXT);
+
+  if (netApActive()) {
+    infoLine(94,  "PORTAL", netApSsid(), C_ACCENT);
+    infoLine(112, "SENHA",  AP_PASSWORD, C_ACCENT);
+    infoLine(130, "ABRIR",  netApIp().toString().c_str(), C_ACCENT);
+  } else if (netConnected()) {
+    snprintf(buf, sizeof(buf), "%s.local", NET_HOSTNAME);
+    infoLine(94, "PORTAL", buf, C_ACCENT);
+    textCentered(116, "abra no celular, na mesma rede", C_SUBTEXT, C_BG, 1);
+  }
+
+  infoLine(152, "LAMPADA", wizStatusName(), wizOnline() ? C_OK : C_WARN);
+  if (wizTargetIp()[0]) {
+    snprintf(buf, sizeof(buf), "%s %s", wizTargetIp(),
+             wizTargetIsFixed() ? "(fixo)" : "(auto)");
+  } else {
+    snprintf(buf, sizeof(buf), "--");
+  }
+  infoLine(170, "IP LAMP.", buf, C_TEXT);
+  infoLine(188, "HORA", rtc.synced ? "PELA INTERNET" : "MANUAL",
+           rtc.synced ? C_OK : C_WARN);
+
+  addButton(6,   220, 112, 30, netApActive() ? "FECHAR PORTAL" : "ABRIR PORTAL",
+            ACT_NET_PORTAL, C_BTN, C_ACCENT);
+  addButton(122, 220, 112, 30, "PROCURAR LAMP.", ACT_NET_WIZ_FIND, C_BTN, C_ACCENT);
+  addButton(6,   254, 228, 30, "TESTAR LAMPADA", ACT_NET_WIZ_TEST, C_BTN, TFT_YELLOW);
+  addButton(6,   288, 228, 28, "VOLTAR",         ACT_BACK, C_HEADER, C_LINE);
+
+  networkSignature(netSig, sizeof(netSig));
+}
+
+void uiNetworkTick() {
+  if (curScreen != SCREEN_NETWORK) return;
+  char sig[96];
+  networkSignature(sig, sizeof(sig));
+  if (strcmp(sig, netSig) != 0) uiDrawScreen(SCREEN_NETWORK);
 }
 
 /* ───────────────────── ajuste da hora atual ────────────────────── */
 
-/* Tela de acerto do relogio. */
 static void drawSetTimeScreen() {
   tft.fillScreen(C_BG);
   drawTitleBar("AJUSTAR HORA");
@@ -367,8 +584,10 @@ static void drawSetTimeScreen() {
   snprintf(buf, sizeof(buf), "%02d:%02d:%02d", rtc.hour, rtc.minute, rtc.second);
   tft.setTextDatum(TC_DATUM);
   tft.setTextColor(C_ACCENT, C_BG);
-  tft.drawString(buf, SCR_W / 2, 46, 6);      // font 6 = 48 px (digitos e ":")
+  tft.drawString(buf, SCR_W / 2, 40, 6);      // font 6 = 48 px (digitos e ":")
   tft.setTextDatum(TL_DATUM);
+  if (rtc.synced)
+    textCentered(94, "sincronizada pela internet", C_WARN, C_BG, 1);
 
   const int H = 44;
   textAt(8, 110 + (H - 16) / 2, "HORA", C_SUBTEXT, C_BG, 2);
@@ -386,7 +605,100 @@ static void drawSetTimeScreen() {
   addButton(20, 266, 200, 44, "CONFIRMAR", ACT_T_CONFIRM, C_BTN_SEL, C_OK);
 }
 
-/* ─────────────────────── alarme disparado ──────────────────────── */
+/* ──────────────────── alarme tocando (fase 1) ──────────────────── */
+
+static void drawRingHeader(bool alt) {
+  uint16_t bg = alt ? C_WARN : C_DANGER;
+  tft.fillRect(0, 0, SCR_W, 32, bg);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(C_TEXT, bg);
+  tft.drawString(alt ? "!!! ACORDE !!!" : "!!! ALARME !!!", SCR_W / 2, 16, 4);
+  tft.setTextDatum(TL_DATUM);
+}
+
+static void drawDismissButton() {
+  tft.fillRoundRect(DISMISS_X, DISMISS_Y, DISMISS_W, DISMISS_H, 10, C_BTN_SEL);
+  tft.drawRoundRect(DISMISS_X, DISMISS_Y, DISMISS_W, DISMISS_H, 10, C_OK);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(C_TEXT, C_BTN_SEL);
+  tft.drawString("DESLIGAR", SCR_W / 2, DISMISS_Y + 34, 4);
+  tft.setTextColor(C_SUBTEXT, C_BTN_SEL);
+  tft.drawString("segure 2 segundos", SCR_W / 2, DISMISS_Y + 62, 2);
+  tft.setTextDatum(TL_DATUM);
+  drawProgress(DISMISS_X + 14, DISMISS_Y + DISMISS_H - 22, DISMISS_W - 28, 10, 0, C_OK);
+  holdLastPx = 0;
+}
+
+static void drawRingingScreen() {
+  tft.fillScreen(C_BG);
+  drawRingHeader(false);
+  tft.fillRect(0, 34, SCR_W, 24, C_PANEL);
+
+  char buf[8];
+  snprintf(buf, sizeof(buf), "%02d:%02d", rtc.hour, rtc.minute);
+  tft.setTextDatum(TC_DATUM);
+  tft.setTextColor(C_TEXT, C_BG);
+  tft.drawString(buf, SCR_W / 2, 66, 7);
+  tft.setTextDatum(TL_DATUM);
+
+  textCentered(120, "Desligue e resolva o desafio", C_SUBTEXT, C_BG, 2);
+  ringLastLine[0] = '\0';
+  ringLastMin     = rtc.minute;
+
+  drawDismissButton();
+  addHitArea(DISMISS_X, DISMISS_Y, DISMISS_W, DISMISS_H, ACT_DISMISS_HOLD);
+
+  static char snoozeLbl[24];
+  snprintf(snoozeLbl, sizeof(snoozeLbl), "SONECA (+%lu min)", SNOOZE_MS / 60000UL);
+  if (SNOOZE_MS < 60000UL) snprintf(snoozeLbl, sizeof(snoozeLbl), "SONECA (+%lu s)", SNOOZE_MS / 1000UL);
+  addButton(20, 260, 200, 48, snoozeLbl, ACT_SNOOZE, C_HEADER, C_WARN, C_TEXT, 2);
+}
+
+void uiRingingUpdate(int stage, unsigned long ringMs, int nextLevel, bool flash) {
+  if (curScreen != SCREEN_ALARM_RINGING) return;
+
+  static bool lastFlash = false;
+  if (stage >= 3 && flash != lastFlash) {
+    drawRingHeader(flash);
+    lastFlash = flash;
+  }
+
+  char line[42];
+  unsigned long secs = ringMs / 1000UL;
+  snprintf(line, sizeof(line), "Estagio %d   %02lu:%02lu   nivel %s",
+           stage, secs / 60, secs % 60, diffName(nextLevel));
+  if (strcmp(line, ringLastLine) != 0) {
+    tft.fillRect(0, 34, SCR_W, 24, C_PANEL);
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextColor(C_ACCENT, C_PANEL);
+    tft.drawString(line, SCR_W / 2, 45, 2);
+    tft.setTextDatum(TL_DATUM);
+    strncpy(ringLastLine, line, sizeof(ringLastLine) - 1);
+    ringLastLine[sizeof(ringLastLine) - 1] = '\0';
+  }
+
+  if (rtc.minute != ringLastMin) {
+    char buf[8];
+    snprintf(buf, sizeof(buf), "%02d:%02d", rtc.hour, rtc.minute);
+    tft.fillRect(0, 62, SCR_W, 54, C_BG);
+    tft.setTextDatum(TC_DATUM);
+    tft.setTextColor(C_TEXT, C_BG);
+    tft.drawString(buf, SCR_W / 2, 66, 7);
+    tft.setTextDatum(TL_DATUM);
+    ringLastMin = rtc.minute;
+  }
+}
+
+void uiRingHoldProgress(float p) {
+  if (curScreen != SCREEN_ALARM_RINGING) return;
+  int px = (int)(constrain(p, 0.0f, 1.0f) * 100);
+  if (px == holdLastPx) return;
+  holdLastPx = px;
+  drawProgress(DISMISS_X + 14, DISMISS_Y + DISMISS_H - 22, DISMISS_W - 28, 10,
+               p, p >= 1.0f ? C_ACCENT : C_OK);
+}
+
+/* ───────────────────── desafio (fase 2) ────────────────────────── */
 
 /* Calcula a grade das alternativas conforme a quantidade. */
 static void optionGeometry(int count, int& cols, int& w, int& h, int& gx, int& gy) {
@@ -408,12 +720,12 @@ static void drawOptions() {
   // Na fase de espera da REACAO os botoes ficam ocultos.
   bool hidden = (c.type == CHAL_REACTION && c.phase == CHP_SHOW);
 
-  tft.fillRect(0, 120, SCR_W, 148, C_BG);
+  tft.fillRect(0, 120, SCR_W, 150, C_BG);
 
   if (hidden) {
     textCentered(180, "AGUARDE...", C_WARN, C_BG, 4);
     // Area invisivel: tocar aqui antes da hora e queimar a largada.
-    addHitArea(0, 120, SCR_W, 148, ACT_EARLY_TAP);
+    addHitArea(0, 120, SCR_W, 150, ACT_EARLY_TAP);
     return;
   }
 
@@ -438,65 +750,71 @@ static void drawOptions() {
   }
 }
 
-/* Tela de alarme tocando: enunciado, alternativas e soneca. */
-static void drawAlarmActiveScreen() {
+static unsigned long chalLastSec = 0xFFFFFFFF;
+
+/* Contador e barra de tempo no rodape. */
+static void drawCountdown(unsigned long remainMs, unsigned long totalMs) {
+  unsigned long s = (remainMs + 999UL) / 1000UL;     // arredonda para cima
+  float p = totalMs ? (float)remainMs / (float)totalMs : 0;
+  uint16_t col = p > 0.5f ? C_OK : (p > 0.2f ? C_WARN : C_DANGER);
+
+  char buf[24];
+  snprintf(buf, sizeof(buf), "TEMPO: %lu:%02lu", s / 60, s % 60);
+  tft.fillRect(0, 274, SCR_W, 46, C_PANEL);
+  textCentered(278, buf, col, C_PANEL, 2);
+  drawProgress(20, 300, 200, 12, p, col);
+  chalLastSec = s;
+}
+
+static void drawChallengeHeader() {
+  tft.fillRect(0, 0, SCR_W, 32, C_HEADER);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(C_ACCENT, C_HEADER);
+  tft.drawString("DESAFIO", SCR_W / 2, 16, 4);
+  tft.setTextDatum(TL_DATUM);
+}
+
+static void drawChallengeScreen() {
   const Challenge& c = challengeCurrent();
   tft.fillScreen(C_BG);
-
-  tft.fillRect(0, 0, SCR_W, 32, C_DANGER);
-  tft.setTextDatum(MC_DATUM);
-  tft.setTextColor(C_TEXT, C_DANGER);
-  tft.drawString("!!! ALARME !!!", SCR_W / 2, 16, 4);
-  tft.setTextDatum(TL_DATUM);
-
-  tft.fillRect(0, 34, SCR_W, 24, C_PANEL);   // linha de status do desafio
+  drawChallengeHeader();
+  tft.fillRect(0, 34, SCR_W, 24, C_PANEL);
 
   textCenteredFit(64, c.prompt, c.promptColor, C_BG);
   textCentered(100, c.hint, C_SUBTEXT, C_BG, 2);
 
   drawOptions();
-
-  addButton(20, 272, 200, 44, "SONECA (+5 min)", ACT_SNOOZE, C_HEADER, C_WARN);
+  chalLastSec     = 0xFFFFFFFF; // forca o contador no proximo update
+  chalLastLine[0] = '\0';
 }
 
-/* Atualiza a tela do alarme: status, alternativas e feedback de acerto/erro. */
-void uiAlarmActiveUpdate(int stage, unsigned long elapsedMs, bool flash) {
+void uiChallengeUpdate(unsigned long remainMs, unsigned long totalMs) {
   if (curScreen != SCREEN_ALARM_ACTIVE) return;
   const Challenge& c = challengeCurrent();
 
-  // Cabecalho pisca no estagio mais agressivo.
-  static bool lastFlash = false;
-  if (stage >= 3 && flash != lastFlash) {
-    uint16_t bg = flash ? C_WARN : C_DANGER;
-    tft.fillRect(0, 0, SCR_W, 32, bg);
-    tft.setTextDatum(MC_DATUM);
-    tft.setTextColor(C_TEXT, bg);
-    tft.drawString("!!! ACORDE !!!", SCR_W / 2, 16, 4);
-    tft.setTextDatum(TL_DATUM);
-    lastFlash = flash;
-  }
-
-  // Linha de status: tentativa, progresso, nivel e tempo decorrido.
-  static char lastLine[42] = "";
+  // Linha de status: tentativa, progresso e nivel.
   char line[42];
-  unsigned long secs = elapsedMs / 1000UL;
   if (c.expectedLen > 1) {
-    snprintf(line, sizeof(line), "T%d  %d/%d  %s  %02lu:%02lu",
-             challengeAttempts(), c.entered, c.expectedLen,
-             diffName(c.level), secs / 60, secs % 60);
+    snprintf(line, sizeof(line), "Tentativa %d   %d/%d   %s",
+             challengeAttempts(), c.entered, c.expectedLen, diffName(c.level));
   } else {
-    snprintf(line, sizeof(line), "Tentativa %d  %s  %02lu:%02lu",
-             challengeAttempts(), diffName(c.level), secs / 60, secs % 60);
+    snprintf(line, sizeof(line), "Tentativa %d   %s",
+             challengeAttempts(), diffName(c.level));
   }
-  if (strcmp(line, lastLine) != 0) {
+  if (strcmp(line, chalLastLine) != 0) {
     tft.fillRect(0, 34, SCR_W, 24, C_PANEL);
     tft.setTextDatum(MC_DATUM);
     tft.setTextColor(C_ACCENT, C_PANEL);
     tft.drawString(line, SCR_W / 2, 45, 2);
     tft.setTextDatum(TL_DATUM);
-    strncpy(lastLine, line, sizeof(lastLine) - 1);
-    lastLine[sizeof(lastLine) - 1] = '\0';
+    strncpy(chalLastLine, line, sizeof(chalLastLine) - 1);
+    chalLastLine[sizeof(chalLastLine) - 1] = '\0';
   }
+
+  // O contador para de andar na tela de resultado.
+  bool resolved = (c.phase == CHP_RIGHT || c.phase == CHP_WRONG);
+  if (!resolved && (remainMs + 999UL) / 1000UL != chalLastSec)
+    drawCountdown(remainMs, totalMs);
 
   if (!c.redraw) return;
   challengeClearRedraw();
@@ -509,32 +827,34 @@ void uiAlarmActiveUpdate(int stage, unsigned long elapsedMs, bool flash) {
   curBtnCount = 0;                      // rearma a tabela de botoes
   flashIdx    = -1;                     // indices antigos deixam de valer
   if (c.phase == CHP_RIGHT) {
-    tft.fillRect(0, 120, SCR_W, 148, C_BG);
+    tft.fillRect(0, 120, SCR_W, 150, C_BG);
     textCentered(170, "CORRETO!", C_OK, C_BG, 4);
+    textCentered(206, "alarme desligado. bom dia!", C_SUBTEXT, C_BG, 2);
   } else if (c.phase == CHP_WRONG) {
-    tft.fillRect(0, 120, SCR_W, 148, C_BG);
-    textCentered(160, "ERROU", C_DANGER, C_BG, 4);
-    textCentered(196, "novo desafio, nivel acima", C_SUBTEXT, C_BG, 2);
+    tft.fillRect(0, 120, SCR_W, 150, C_BG);
+    textCentered(160, c.timedOut ? "TEMPO ESGOTADO" : "ERROU", C_DANGER, C_BG, 4);
+    textCentered(196, "o alarme vai tocar de novo", C_SUBTEXT, C_BG, 2);
   } else {
     drawOptions();
   }
-  addButton(20, 272, 200, 44, "SONECA (+5 min)", ACT_SNOOZE, C_HEADER, C_WARN);
 }
 
 /* ──────────────────────── troca de tela ────────────────────────── */
 
-/* Redesenha uma tela do zero e reconstroi a tabela de botoes. */
 void uiDrawScreen(Screen s) {
   curScreen   = s;
   curBtnCount = 0;
   flashIdx    = -1;
 
   switch (s) {
-    case SCREEN_CLOCK:        drawClockScreen();       break;
-    case SCREEN_SETTINGS:     drawSettingsScreen();    break;
-    case SCREEN_SET_TIME:     drawSetTimeScreen();     break;
-    case SCREEN_ALARM_CONFIG: drawAlarmConfigScreen(); break;
-    case SCREEN_ALARM_ACTIVE: drawAlarmActiveScreen(); break;
+    case SCREEN_CLOCK:         drawClockScreen();       break;
+    case SCREEN_SETTINGS:      drawSettingsScreen();    break;
+    case SCREEN_SET_TIME:      drawSetTimeScreen();     break;
+    case SCREEN_ALARM_CONFIG:  drawAlarmConfigScreen(); break;
+    case SCREEN_NIGHT_CONFIG:  drawNightConfigScreen(); break;
+    case SCREEN_NETWORK:       drawNetworkScreen();     break;
+    case SCREEN_ALARM_RINGING: drawRingingScreen();     break;
+    case SCREEN_ALARM_ACTIVE:  drawChallengeScreen();   break;
   }
 }
 
