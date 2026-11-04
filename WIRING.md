@@ -70,7 +70,7 @@ SPI a 40 MHz no barramento **VSPI**, driver ST7789, 240×320, rotação 0.
 | TOUCH_CLK | 25 | **não é** DAC de áudio |
 | TOUCH_MOSI | 32 | |
 | TOUCH_MISO | 39 | somente input |
-| TOUCH_IRQ | 36 | somente input — **não usado desde a v0.4**: com Wi-Fi o IO36 recebe pulsos falsos (errata do ESP32) e a interrupção travava a placa; o touch é lido por polling a cada 20 ms |
+| TOUCH_IRQ | 36 | somente input — **não usado desde a v0.4**: com Wi-Fi o IO36 pode receber pulsos falsos (errata do ESP32); o touch é lido por polling a cada 20 ms |
 
 > **O touch NÃO compartilha o SPI da tela.** Por isso o firmware não usa
 > `tft.getTouch()` nem `tft.calibrateTouch()` — a TFT_eSPI assume barramento

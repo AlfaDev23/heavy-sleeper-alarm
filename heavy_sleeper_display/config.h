@@ -46,7 +46,7 @@
 #define PIN_TOUCH_MOSI  32
 #define PIN_TOUCH_MISO  39   // INPUT ONLY
 #define PIN_TOUCH_IRQ   36   // INPUT ONLY. NAO usado desde a v0.4 (ver touch.cpp:
-                             // com Wi-Fi o IO36 tem pulsos falsos e a IRQ trava a placa)
+                             // com Wi-Fi o IO36 pode ter pulsos falsos; o touch vai por polling)
 
 /* ── Audio ────────────────────────────────────────────────────────── */
 #define PIN_DAC_AUDIO   26   // DAC2 do ESP32 (NAO e o 25: aquele e o CLK do touch)

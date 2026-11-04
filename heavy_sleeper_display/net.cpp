@@ -7,8 +7,19 @@
  *   Por isso, com o portal aberto, so tentamos reconectar quando nao ha
  *   nenhum celular no portal — e o reconnect automatico do core fica
  *   desligado; quem decide quando tentar e esta maquina de estados.
+ *
+ * DETALHE IMPORTANTE (trocar de modo logo depois de mexer no Wi-Fi):
+ *   neste core a lista de callbacks da biblioteca Network (_cbEventList) nao
+ *   tem trava (NETWORK_EVENTS_MUTEX vem desligado). A task arduino_events
+ *   percorre essa lista e dorme dentro do callback do STA_START, no
+ *   esp_wifi_set_ps(). Se o loop chamar WiFi.mode(WIFI_AP_STA) nesses ~2 ms, o
+ *   AP.onEnable() insere na mesma lista, a task acorda com o iterador invalido
+ *   e o Core 1 trava: reinicia com rst:0x8 TG1WDT_SYS_RESET, sem Guru
+ *   Meditation. Esperar WiFi.STA.started() nao resolve, porque esse bit sobe
+ *   antes do callback. Por isso o netBegin() liga direto no modo final.
  */
 #include <ESPmDNS.h>
+#include <esp_mac.h>
 #include <time.h>
 #include "net.h"
 #include "storage.h"
@@ -28,10 +39,12 @@ static char          apSsid[24]     = "";
 
 /* ───────────────────────── ponto de acesso ─────────────────────── */
 
-/* Monta "Despertador-XXXX" com os 2 ultimos bytes do MAC. */
+/* Monta "Despertador-XXXX" com os 2 ultimos bytes do MAC do ponto de acesso.
+   Le direto do eFuse: WiFi.macAddress() so preenche o buffer com a STA de
+   pe e, antes disso, deixaria lixo de pilha no nome da rede. */
 static void buildApSsid() {
   uint8_t mac[6];
-  WiFi.macAddress(mac);
+  esp_read_mac(mac, ESP_MAC_WIFI_SOFTAP);
   snprintf(apSsid, sizeof(apSsid), "%s%02X%02X", AP_SSID_PREFIX, mac[4], mac[5]);
 }
 
@@ -92,10 +105,13 @@ static void onConnected() {
 void netBegin() {
   WiFi.persistent(false);          // credenciais ficam na NOSSA NVS, nao na do core
   WiFi.setAutoReconnect(false);    // ver nota no topo do arquivo
-  WiFi.mode(WIFI_STA);
+  // Estes dois valem so se vierem ANTES do mode(): o core aplica ao ligar a STA.
   WiFi.setHostname(NET_HOSTNAME);
   WiFi.setSleep(false);            // UDP da lampada e portal respondem melhor
   buildApSsid();
+
+  // Ja liga no modo final, sem passar por WIFI_STA (ver nota no topo do arquivo).
+  WiFi.mode(netcfg.ssid[0] == '\0' ? WIFI_AP_STA : WIFI_STA);
 
   if (netcfg.ssid[0] == '\0') {
     Serial.println(F("[NET] nenhuma rede salva"));
