@@ -114,8 +114,8 @@ Display **84%** de flash / 16% de RAM (o Wi-Fi pesa) · Actuator 22% / 6%.
 tests/host/run.sh
 ```
 
-Compila a lógica real do display com tela, touch, Wi-Fi e lâmpada falsos e
-simula: rampa da luz, tocar, segurar DESLIGAR, errar, tempo esgotado,
+Precisa de `g++` e `bash`. Compila a lógica real do display com tela, touch,
+Wi-Fi e lâmpada falsos e simula: rampa da luz, tocar, segurar DESLIGAR, errar, tempo esgotado,
 escalada, acerto, soneca e modo noturno — para os 4 tipos de desafio.
 
 ---
@@ -140,7 +140,8 @@ Na tela **AJUSTES → TESTAR ALARME** o alarme dispara na hora, sem esperar.
 ## Primeiro uso: Wi-Fi pelo celular
 
 1. Ligue o display. Sem rede salva ele abre o portal: no celular, conecte na
-   rede **`Despertador-XXXX`**, senha **`despertador`**.
+   rede **`Despertador-XXXX`**, senha **`despertador`**. `XXXX` são os 2
+   últimos bytes do MAC do ponto de acesso, então o nome não muda entre boots.
 2. A página de configuração abre sozinha (ou acesse `http://192.168.4.1`).
 3. Em **Rede Wi-Fi**: *Procurar redes* → *Usar* → senha → *Conectar*.
 4. A tela **AJUSTES → REDE E LÂMPADA** mostra o IP. Daí em diante o portal
@@ -310,17 +311,29 @@ POST /api/wiz/test        pisca a lâmpada
   isso a IDLE0 morre de fome e o task watchdog reinicia o ESP32.
 - O backlight só é anexado ao LEDC **depois** de `tft.init()`, porque a
   `TFT_eSPI` configura o pino 21 como saída digital durante o init.
+- **O Wi-Fi liga direto no modo final** (`WIFI_AP_STA` sem rede salva,
+  `WIFI_STA` com rede). No core 3.3.5 a lista de callbacks da biblioteca
+  Network não tem trava: passar de `WIFI_STA` para `WIFI_AP_STA` nos ~2 ms
+  depois de ligar a STA invalida o percurso da task `arduino_events`, e o
+  watchdog reinicia a placa (`rst:0x8 TG1WDT_SYS_RESET`, sem Guru Meditation).
+  Detalhes no topo de `net.cpp`.
+- `WiFi.setHostname()` e `WiFi.setSleep()` vêm **antes** de `WiFi.mode()`:
+  depois dele o core não os aplica.
+- O touch é lido por **polling** a cada 20 ms, sem a IRQ do IO36: com o Wi-Fi
+  ligado esse pino pode receber pulsos falsos (errata do ESP32).
 - Layout e área clicável saem da **mesma tabela de botões** (`curBtns[]` em
   `ui.cpp`), então nunca saem de sincronia.
 - Preferences corrompida (valores fora de faixa) volta sozinha para os
-  padrões: alarme 07:00, nível Fácil, luz 50%.
+  padrões: alarme 07:00, nível Fácil, luz 100%.
 
 ---
 
 ## Pendências conhecidas
 
-- Nada foi testado em hardware ainda — só compilado. A calibração do touch,
-  o volume real do DAC e o comportamento dos MOSFETs precisam de bancada.
+- **Testado na placa (v0.4):** boot sem reinício, portal, relógio, rampa e
+  disparo do alarme no modo demo, toque e desafio com o Wi-Fi ligado, conexão
+  na rede de casa e lâmpada WiZ. Ainda precisam de bancada o volume real do
+  DAC e o comportamento dos MOSFETs.
 - **Touch:** a calibração de 3 pontos detecta sozinha se os eixos brutos
   estão trocados ou invertidos. Se mesmo assim o toque cair no lugar errado,
   ajuste `touch.setRotation()` em `touch.cpp` (0–3) e recalibre — apagar a
@@ -333,10 +346,11 @@ POST /api/wiz/test        pisca a lâmpada
 - **Relógio:** com Wi-Fi a hora vem do NTP (`a.st1.ntp.br`) e é corrigida a
   cada 30 s. Sem internet continua por software e perde a hora ao
   reiniciar; para funcionar sem Wi-Fi, ainda vale um DS3231.
-- **Novo na v0.4, a conferir na bancada:** resposta real da lâmpada WiZ
-  (faixa de temperatura, comunicação local no app); som com o Wi-Fi ligado
-  (o rádio também usa o Core 0, onde roda a task de áudio, e pode haver
-  pequenos cortes); se segurar DESLIGAR por 2 s é confortável no touch
+- **Novo na v0.4, a conferir na bancada:** hora pelo NTP e
+  `http://despertador.local` (com `DEMO_MODE` ligado o NTP não é aplicado:
+  comente-o para testar); rampa da lâmpada com os tempos reais e a faixa de
+  temperatura da sua lâmpada; som com o Wi-Fi ligado (o rádio também usa o
+  Core 0, onde roda a task de áudio, e pode haver pequenos cortes); se segurar DESLIGAR por 2 s é confortável no touch
   resistivo (uma falha de leitura de até 150 ms não zera a contagem); se o
   vermelho e o brilho do modo noturno incomodam no quarto escuro
   (`C_NIGHT`, `BL_NIGHT`).
