@@ -3,7 +3,8 @@
  *
  * Fica na flash (PROGMEM). A pagina so fala com a API JSON do portal.cpp:
  *   GET  /api/state          estado completo
- *   POST /api/save           alarme (chalMask = tipos marcados), lampada, modo noturno e fuso
+ *   POST /api/alarms         list=HH:MM,ativo,dias;... (ate 6; dias 0-127, bit0=dom)
+ *   POST /api/save           opcoes (chalMask = tipos marcados, ringMax), lampada, modo noturno e fuso
  *   POST /api/mode           demo=1 (demonstracao) / demo=0 (producao)
  *   POST /api/vib/test       duty=0-100: vibra 2 s nessa intensidade
  *   GET  /api/scan           redes Wi-Fi proximas
@@ -45,6 +46,9 @@ button.small{width:auto;padding:6px 12px;margin:4px 0}
 #toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:#21262d;border:1px solid var(--line);padding:10px 16px;border-radius:10px;display:none;max-width:90%}
 .busy{background:#3d1d1d;border:1px solid var(--bad);border-radius:10px;padding:10px;margin:10px 0;display:none}
 output{float:right;color:var(--tx)}
+.alm{border-bottom:1px solid var(--line);padding:10px 0}.alm .row{align-items:center}.alm .row>input{flex:2}.alm .row>button{flex:0 0 auto}
+.alm .chk{margin:0}.days{display:flex;gap:4px;margin:8px 0 4px}.days span{flex:1;text-align:center;padding:7px 0;border:1px solid var(--line);border-radius:6px;cursor:pointer;user-select:none;font-size:14px}
+.days span.on{background:#1f6feb;border-color:#1f6feb}.off{opacity:.55}
 .types{display:grid;grid-template-columns:1fr 1fr;gap:0 10px}.types .chk{margin:6px 0}
 .vib .row{align-items:center}.vib .row>button{flex:0 0 auto}
 </style></head><body>
@@ -54,16 +58,23 @@ output{float:right;color:var(--tx)}
 
 <section><h2>Status</h2>
 <div class="kv"><span>Hora</span><b id="s_time">--</b></div>
+<div class="kv"><span>Proximo alarme</span><b id="s_next">--</b></div>
 <div class="kv"><span>Wi-Fi</span><b id="s_net">--</b></div>
 <div class="kv"><span>Lampada</span><b id="s_wiz">--</b></div>
 <div class="kv"><span>Tela</span><b id="s_night">--</b></div>
 <div class="kv"><span>Modo</span><b id="s_mode">--</b></div>
 </section>
 
+<section><h2>Alarmes</h2>
+<div id="alms"></div>
+<div class="row"><button type="button" onclick="addAlm()">+ Adicionar</button><button type="button" class="pri" onclick="saveAlms()">Salvar alarmes</button></div>
+<p class="sub">Toque nos dias para marcar. Sem nenhum dia marcado o alarme toca uma vez so e depois se desativa. Ate 6 alarmes.</p>
+</section>
+
 <form id="cfg" onsubmit="return save(event)">
-<section><h2>Alarme</h2>
-<div class="row"><div><label>Horario</label><input type="time" name="almTime" required></div>
-<div><label>&nbsp;</label><label class="chk"><input type="checkbox" name="almEn" value="1">Ativo</label></div></div>
+<section><h2>Opcoes do despertar</h2>
+<label>Tocar no maximo (se ninguem desligar)</label><select name="ringMax">
+<option value="5">5 min</option><option value="10">10 min</option><option value="15">15 min</option><option value="20">20 min</option><option value="30">30 min</option><option value="0">Sem limite</option></select>
 <label>Desafios (marque um ou mais: cada desafio sorteia um deles)</label>
 <div class="types"><label class="chk"><input type="checkbox" class="tchk" value="0">Matematica</label><label class="chk"><input type="checkbox" class="tchk" value="1">Memoria</label>
 <label class="chk"><input type="checkbox" class="tchk" value="2">Sequencia</label><label class="chk"><input type="checkbox" class="tchk" value="3">Reacao</label></div>
@@ -132,11 +143,24 @@ function toast(t){const e=$('#toast');e.textContent=t;e.style.display='block';cl
 function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
 async function post(u,msg,body){try{const r=await fetch(u,{method:'POST',body:body||new URLSearchParams()});const j=await r.json().catch(()=>({}));
 toast(r.ok?(msg||'OK'):(j.error||('Erro '+r.status)));setTimeout(refresh,800);return r.ok}catch(e){toast('Sem resposta do despertador');return false}}
-function fill(s){const a=s.alarm,n=s.night;F.almTime.value=hm(a.h*60+a.m);F.almEn.checked=a.en;document.querySelectorAll('.tchk').forEach(c=>c.checked=!!(a.mask>>c.value&1));F.diff.value=a.diff;
+let A=[],aLoaded=false;const DN=['D','S','T','Q','Q','S','S'],DF=['dom','seg','ter','qua','qui','sex','sab'];
+function dtxt(d){if(d==0)return'Toca uma vez e se desativa';if(d==127)return'Todos os dias';if(d==62)return'Segunda a sexta';if(d==65)return'Sabado e domingo';
+let o=[];for(let k=1;k<=7;k++){if(d>>(k%7)&1)o.push(DF[k%7])}return o.join(', ')}
+function drawAlms(){$('#alms').innerHTML=A.length?A.map((a,i)=>'<div class="alm'+(a.en?'':' off')+'"><div class="row"><input type="time" value="'+hm(a.h*60+a.m)+'" onchange="setT('+i+',this.value)">'
++'<label class="chk"><input type="checkbox"'+(a.en?' checked':'')+' onchange="A['+i+'].en=this.checked;drawAlms()">Ativo</label>'
++'<button type="button" class="small" onclick="A.splice('+i+',1);drawAlms()">Remover</button></div><div class="days">'
++DN.map((n,d)=>'<span class="'+(a.d>>d&1?'on':'')+'" onclick="A['+i+'].d^='+(1<<d)+';drawAlms()">'+n+'</span>').join('')
++'</div><div class="sub">'+dtxt(a.d)+'</div></div>').join(''):'<div class="sub">Nenhum alarme.</div>'}
+function setT(i,v){const p=v.split(':');if(p.length<2)return;A[i].h=+p[0];A[i].m=+p[1]}
+function addAlm(){if(A.length>=6){toast('No maximo 6 alarmes');return}A.push({h:7,m:0,d:62,en:true});drawAlms()}
+async function saveAlms(){const b=new URLSearchParams();b.set('list',A.map(a=>hm(a.h*60+a.m)+','+(a.en?1:0)+','+a.d).join(';'));
+if(await post('/api/alarms','Alarmes salvos',b)){aLoaded=false}}
+function fill(s){const a=s.alarm,n=s.night;F.ringMax.value=a.ringMax;document.querySelectorAll('.tchk').forEach(c=>c.checked=!!(a.mask>>c.value&1));F.diff.value=a.diff;
 F.chal.value=a.chal;F.vib.value=a.vib;F.ramp.value=a.ramp;F.light.value=a.light;$('#lv').value=a.light+'%';
 ['vibW','vibM','vibX'].forEach((k,i)=>{F[k].value=a.vibD[i];vo(F[k])});F.wizIp.value=s.wiz.cfgIp;F.nightMode.value=n.mode;F.nightStart.value=hm(n.start);F.nightEnd.value=hm(n.end);F.tz.value=s.tz}
 function show(s){const N=s.net,W=s.wiz;$('#hdr').textContent=N.state==='CONECTADO'?('Na rede '+N.ssid+' - '+N.ip):(N.ap?('Portal: '+N.apSsid):N.state);
-$('#s_time').innerHTML=esc(s.time)+(s.ntp?' <span class="ok">(internet)</span>':' <span class="warn">(manual)</span>');
+$('#s_next').innerHTML=s.missed?'<span class="bad">'+esc(s.missed)+'</span>':(s.next?esc(s.next):'<span class="sub">nenhum ativo</span>');
+$('#s_time').innerHTML=esc(['DOM','SEG','TER','QUA','QUI','SEX','SAB'][s.wday]||'')+' '+esc(s.time)+(s.ntp?' <span class="ok">(internet)</span>':' <span class="warn">(manual)</span>');
 $('#s_net').innerHTML='<span class="'+(N.state==='CONECTADO'?'ok':'warn')+'">'+esc(N.state)+'</span>'+(N.ssid?' '+esc(N.ssid):'')+(N.ip&&N.state==='CONECTADO'?' - '+esc(N.ip):'');
 $('#s_wiz').innerHTML='<span class="'+(W.status==='ONLINE'?'ok':'warn')+'">'+esc(W.status)+'</span>'+(W.ip?' '+esc(W.ip)+(W.fixed?' (fixo)':' (auto)'):'');
 $('#s_night').textContent=(s.night.active?'modo noturno':'modo dia')+(s.sunrise?' - amanhecer em andamento':'');
@@ -144,9 +168,10 @@ $('#found').innerHTML=W.found.map(f=>'<div><span>'+esc(f.ip)+' <span class="sub"
 $('#s_mode').innerHTML=s.demo?'<span class="warn">DEMO</span>':'<span class="ok">PRODUCAO</span>';
 $('#m_txt').innerHTML='Agora: '+$('#s_mode').innerHTML;$('#m_btn').textContent=s.demo?'Mudar para PRODUCAO':'Mudar para DEMO';demo=s.demo;
 $('#busy').style.display=s.alarm.busy?'block':'none';$('#fw').textContent='Firmware '+s.fw}
-async function refresh(){try{const s=await (await fetch('/api/state')).json();if(!loaded){fill(s);loaded=true}show(s)}catch(e){$('#hdr').textContent='sem conexao com o despertador'}}
+async function refresh(){try{const s=await (await fetch('/api/state')).json();if(!loaded){fill(s);loaded=true}
+if(!aLoaded){A=s.alarms.map(x=>({h:x.h,m:x.m,d:x.d,en:x.en}));drawAlms();aLoaded=true}show(s)}catch(e){$('#hdr').textContent='sem conexao com o despertador'}}
 async function save(e){e.preventDefault();let m=0;document.querySelectorAll('.tchk:checked').forEach(c=>m|=1<<c.value);
-if(!m){toast('Marque pelo menos 1 tipo de desafio');return false}const b=new URLSearchParams(new FormData(F));b.set('chalMask',m);if(!F.almEn.checked)b.set('almEn','0');
+if(!m){toast('Marque pelo menos 1 tipo de desafio');return false}const b=new URLSearchParams(new FormData(F));b.set('chalMask',m);
 if(await post('/api/save','Configuracoes salvas',b)){loaded=false}return false}
 function vo(e){$('#o_'+e.name).value=e.value+'%'}
 function vt(k){const b=new URLSearchParams();b.set('duty',F[k].value);post('/api/vib/test','Vibrando '+F[k].value+'% por 2 s',b)}

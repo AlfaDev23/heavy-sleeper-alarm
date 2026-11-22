@@ -1,4 +1,4 @@
-# Despertador Heavy Sleepers — v0.4.1-alpha
+# Despertador Heavy Sleepers — v0.5.0-alpha
 
 Despertador para quem tem sono pesado, com dois ESP32 conversando por UART.
 Combina luz gradual (lâmpada Wi-Fi WiZ), vibração, som crescente e desafios
@@ -12,6 +12,17 @@ heavy_sleeper_demo/        demo estático anterior (v0.1), mantido como referên
 tests/host/                simulação do alarme no PC (g++), sem hardware
 WIRING.md                  esquema de ligação
 ```
+
+## Novidades da v0.5
+
+1. **Vários alarmes** (até 6), cada um com horário, ligado/desligado e
+   **dias da semana**: segunda a sexta, todos os dias, fim de semana, dias
+   avulsos ou **uma vez só** (toca e se desativa).
+2. **Tempo máximo tocando:** se ninguém desligar, o alarme desiste sozinho
+   depois de 5/10/15/20/30 min (padrão 10) ou nunca. Som, vibração e luz
+   apagam e o relógio mostra "Alarme das 07:00 não atendido".
+3. O relógio agora sabe o **dia da semana** (pela internet, ou acertado em
+   AJUSTAR HORA).
 
 ## Novidades da v0.4
 
@@ -60,6 +71,22 @@ A linha abaixo está em
 Ela existe **apenas** para a `TFT_eSPI` compilar; o valor tem que bater com
 `PIN_TOUCH_CS` do `config.h`. Quem lê o touch de verdade é a
 `XPT2046_Touchscreen`, num `SPIClass(HSPI)` separado (a tela ocupa o VSPI).
+
+### 2b. Cores da tela no `User_Setup.h` — **já aplicado**
+
+O padrão da `TFT_eSPI` para o ST7789 é inversão ligada e ordem RGB. O painel
+do E32R28T precisa do contrário nas duas coisas, então estas linhas estão
+**ativas** no mesmo `User_Setup.h`:
+
+```cpp
+#define TFT_RGB_ORDER TFT_BGR    // sem isso vermelho e azul trocam
+#define TFT_INVERSION_OFF        // sem isso o preto vira branco
+```
+
+Sem elas o fundo fica branco (fraco no modo noturno) e o vermelho do modo
+noturno aparece **amarelo** (azul por causa da troca, invertido = amarelo).
+Conferência rápida: no modo noturno o fundo é preto e os números são
+vermelhos; a faixa "!!! ALARME !!!" é vermelha e o botão DESLIGAR, verde.
 
 ### 3. Core ESP32 Arduino 3.x — atenção
 
@@ -135,12 +162,12 @@ A escolha fica gravada na NVS e sobrevive a reinícios. O padrão de fábrica é
 | | Produção (uso real) | Demo (apresentação) |
 |---|---|---|
 | Relógio | NTP (ou AJUSTAR HORA sem internet) | começa em **07:29:00**, NTP ignorado |
-| Alarme | o que você configurou | **07:30**, ativo |
+| Alarmes | a sua lista | só um, **07:30** todo dia |
 | Escalada | 2 / 5 / 10 min | 20 / 45 / 80 s |
 | Soneca | 5 min | 30 s |
 | Rampa da lâmpada | 5–20 min (configurável) | 45 s (começa às 07:29:15) |
 
-- O **alarme de verdade não se perde**: no demo o horário 07:30 fica só na
+- A **lista de verdade não se perde**: no demo o alarme 07:30 fica só na
   RAM e salvar não grava o alarme. Ao voltar para produção ele é restaurado.
 - Ao voltar para produção a hora vem do NTP no segundo seguinte. Sem
   internet o relógio volta a 00:00: acerte em **AJUSTES → AJUSTAR HORA**.
@@ -188,15 +215,57 @@ do desafio.
 - Lâmpadas **branco ajustável** só aceitam 2700–6500 K. Se a rampa não
   começar, troque `WIZ_TEMP_MIN` para 2700 no `config.h`.
 
+## Alarmes
+
+Até **6 alarmes**. Em cada um: horário, ligado/desligado e os dias.
+
+| Dias | Toca |
+|---|---|
+| SEG-SEX | segunda a sexta |
+| TODOS | todos os dias |
+| dias avulsos (D S T Q Q S S) | só nos dias marcados |
+| nenhum dia (UMA VEZ) | no próximo horário, e depois se desativa sozinho |
+
+- **Na tela:** toque longo → AJUSTES → **ALARMES** (ou toque no cabeçalho
+  "ALARME" do relógio). A lista mostra cada alarme com o botão ON/OFF; tocar
+  no alarme abre a edição (hora, dias, ativo, SALVAR / EXCLUIR). **+ NOVO**
+  cria um alarme; **OPÇÕES** abre as opções do despertar (desafio, luz,
+  vibração, rampa, tempo para resolver e tempo máximo tocando), que valem
+  para todos os alarmes.
+- **No portal:** seção **Alarmes**, com *+ Adicionar*, horário, *Ativo*, os
+  dias para tocar e *Salvar alarmes*. O status mostra o **próximo alarme**.
+- A tela do relógio mostra o próximo alarme, com o dia da semana quando não
+  é hoje (ex. `Alarme SEG 06:30  luz 06:20`), e a rampa da lâmpada acende
+  para ele.
+- **Dia da semana:** com internet vem do NTP. Sem internet, acerte em
+  **AJUSTAR HORA → DIA** junto com a hora; se ele estiver errado, os alarmes
+  de dias específicos tocam no dia errado.
+- Quem vem da v0.4 tem o alarme antigo convertido no primeiro da lista,
+  tocando todos os dias, como antes.
+
+### Tempo máximo tocando
+
+**OPÇÕES → TOCAR NO MÁXIMO** (ou *Tocar no máximo* no portal): 5, 10, 15,
+20, 30 min ou sem limite. O padrão é **10 min**, como no celular. Conta só o
+tempo **tocando**: o tempo resolvendo o desafio não entra, então errar o
+desafio de propósito não encurta o alarme. Ao estourar, som, vibração e
+lâmpada apagam (`ALARM:TIMEOUT` no log) e o relógio mostra **"Alarme das
+07:00 não atendido"** em vermelho até o próximo toque na tela. No demo com
+tempos curtos o limite é 2 min.
+
+> Para quem tem sono muito pesado, "sem limite" é a opção mais segura: o
+> limite existe para quando o alarme toca com a casa vazia.
+
 ## Navegação
 
 ```
-RELÓGIO ──toque longo (1,5 s)──► AJUSTES ──► CONFIG. ALARME
+RELÓGIO ──toque longo (1,5 s)──► AJUSTES ──► ALARMES ──► EDITAR ALARME
+   │                                   │            └──► OPÇÕES DO DESPERTAR
    │                                   ├──► MODO NOTURNO
    │                                   ├──► REDE E LÂMPADA
    │                                   ├──► AJUSTAR HORA
    │                                   └──► TESTAR ALARME
-   ├──toque no cabeçalho "ALARME"──► CONFIG. ALARME
+   ├──toque no cabeçalho "ALARME"──► ALARMES
    ├──toque na hora───────────────► AJUSTAR HORA
    └──(modo noturno) toque ───────► mostra a tela completa por 10 s
 
@@ -271,7 +340,7 @@ não funcionam). No modo AUTO a tela passa a seguir a luz do ambiente
 
 ## Desafios
 
-**Vários tipos ao mesmo tempo:** na tela **CONFIG. ALARME** os botões
+**Vários tipos ao mesmo tempo:** na tela **ALARMES → OPÇÕES** os botões
 MAT / MEM / SEQ / REA ligam e desligam cada tipo (verde = marcado), e no
 portal são caixas de seleção. Com mais de um marcado, **cada desafio sorteia
 um tipo** entre os marcados — inclusive quando o alarme volta a tocar depois
@@ -300,7 +369,7 @@ Display → Actuator:
 VIB:ON | VIB:OFF | VIB:PULSE
 VIB:DUTY:0 … VIB:DUTY:100    intensidade (%) dos próximos ON / PULSE
 STATUS?
-ALARM:START | DISMISS | RESUME | STOP | SNOOZE | ESCALATED   (só log)
+ALARM:START | DISMISS | RESUME | STOP | SNOOZE | ESCALATED | TIMEOUT   (só log)
 LIGHT:0 … LIGHT:100      RESERVADO: só com USE_MOSFET_LIGHT nas duas placas
 ```
 
@@ -331,8 +400,10 @@ Para criar opções novas no futuro: um campo no `<form id="cfg">` de
 ```
 GET  /                    página
 GET  /api/state           estado completo (JSON, sem a senha do Wi-Fi)
-POST /api/save            almTime, almEn, chalMask (bits 1=MAT 2=MEM 4=SEQ
-                          8=REA), diff, chal, vib (0-3), vibW,
+POST /api/alarms          list=HH:MM,ativo,dias;...  (até 6; dias = máscara
+                          0-127, bit 0 = domingo; 0 = uma vez)
+POST /api/save            ringMax (0/5/10/15/20/30), chalMask (bits 1=MAT
+                          2=MEM 4=SEQ 8=REA), diff, chal, vib (0-3), vibW,
                           vibM, vibX (PWM %), ramp, light, wizIp, nightMode,
                           nightStart, nightEnd, tz
 POST /api/vib/test        duty=0-100 → vibra 2 s (não salva)

@@ -20,6 +20,7 @@
 #include "night.h"
 #include "app.h"
 #include "pwm.h"
+#include "alarms.h"
 
 TFT_eSPI tft = TFT_eSPI();
 
@@ -198,20 +199,35 @@ static void drawClockTime() {
 static void drawClockAlarmBar() {
   bool sunrise = appSunriseActive();
   uint16_t bg = sunrise ? 0x4A00 : C_PANEL;       // ambar escuro no amanhecer
+
+  const char* missed = appMissedAlarm();
+  if (missed[0] && !sunrise) bg = 0x5000;          // vermelho escuro: nao atendido
   tft.fillRect(0, 115, SCR_W, 30, bg);
 
   char buf[40];
-  if (sunrise) {
-    snprintf(buf, sizeof(buf), "Amanhecendo... alarme %02d:%02d",
-             settings.almHour, settings.almMin);
+  long left = 0;
+  int  idx  = alarmNext(settings.alarms, settings.alarmCount, rtc.weekday,
+                        rtc.secondsOfDay(), &left);
+  const Alarm* nx = idx >= 0 ? &settings.alarms[idx] : NULL;
+  if (missed[0] && !sunrise) {
+    snprintf(buf, sizeof(buf), "%s", missed);
+    tft.setTextColor(C_TEXT, bg);
+  } else if (sunrise && nx) {
+    snprintf(buf, sizeof(buf), "Amanhecendo... alarme %02d:%02d", nx->hour, nx->minute);
     tft.setTextColor(TFT_YELLOW, bg);
-  } else if (settings.almEnabled) {
-    int luz = (settings.almHour * 60 + settings.almMin - settings.rampMin + 1440) % 1440;
-    snprintf(buf, sizeof(buf), "Alarme %02d:%02d  luz %02d:%02d",
-             settings.almHour, settings.almMin, luz / 60, luz % 60);
+  } else if (nx) {
+    // Proximo alarme: dia da semana se nao for hoje, e quando a luz acende.
+    int wd  = alarmWdayIn(rtc.weekday, rtc.secondsOfDay(), left);
+    int luz = (nx->hour * 60 + nx->minute - settings.rampMin + 1440) % 1440;
+    if (wd == rtc.weekday && left < 86400L)
+      snprintf(buf, sizeof(buf), "Alarme %02d:%02d  luz %02d:%02d",
+               nx->hour, nx->minute, luz / 60, luz % 60);
+    else
+      snprintf(buf, sizeof(buf), "Alarme %s %02d:%02d  luz %02d:%02d", wdayShort(wd),
+               nx->hour, nx->minute, luz / 60, luz % 60);
     tft.setTextColor(C_ACCENT, bg);
   } else {
-    snprintf(buf, sizeof(buf), "ALARME DESATIVADO");
+    snprintf(buf, sizeof(buf), "NENHUM ALARME ATIVO");
     tft.setTextColor(C_SUBTEXT, bg);
   }
   tft.setTextDatum(MC_DATUM);
@@ -331,11 +347,19 @@ static void drawNightTime() {
 }
 
 static void drawNightAlarmLine() {
-  char buf[32];
-  if (settings.almEnabled)
-    snprintf(buf, sizeof(buf), "alarme %02d:%02d", settings.almHour, settings.almMin);
-  else
-    snprintf(buf, sizeof(buf), "alarme desligado");
+  char buf[40];
+  long left = 0;
+  int  idx  = alarmNext(settings.alarms, settings.alarmCount, rtc.weekday,
+                        rtc.secondsOfDay(), &left);
+  if (appMissedAlarm()[0]) {
+    snprintf(buf, sizeof(buf), "%s", appMissedAlarm());
+  } else if (idx >= 0) {
+    int wd = alarmWdayIn(rtc.weekday, rtc.secondsOfDay(), left);
+    snprintf(buf, sizeof(buf), "alarme %s %02d:%02d", wdayShort(wd),
+             settings.alarms[idx].hour, settings.alarms[idx].minute);
+  } else {
+    snprintf(buf, sizeof(buf), "sem alarme");
+  }
   tft.fillRect(0, 268, SCR_W, 30, C_BG);
   textCentered(274, buf, C_NIGHT_DIM, C_BG, 2);
 }
@@ -360,6 +384,7 @@ void uiClockTick() {
   if (nightOn) {
     if (rtc.hour != lastHour || rtc.minute != lastMin) {
       drawNightTime();
+      drawNightAlarmLine();          // o proximo alarme muda quando um passa
       lastHour = rtc.hour; lastMin = rtc.minute;
     }
     return;
@@ -367,6 +392,7 @@ void uiClockTick() {
 
   if (rtc.hour != lastHour || rtc.minute != lastMin) {
     drawClockTime();
+    drawClockAlarmBar();             // o proximo alarme muda quando um passa
     lastHour = rtc.hour; lastMin = rtc.minute; lastSec = rtc.second;
   } else if (rtc.second != lastSec) {
     char sbuf[6];
@@ -391,7 +417,7 @@ static void drawSettingsScreen() {
   tft.fillScreen(C_BG);
   drawTitleBar("AJUSTES");
 
-  addButton(20,  38, 200, 34, "CONFIG. ALARME", ACT_GO_ALARM_CFG, C_BTN, C_ACCENT);
+  addButton(20,  38, 200, 34, "ALARMES",        ACT_GO_ALARM_CFG, C_BTN, C_ACCENT);
   addButton(20,  78, 200, 34, "MODO NOTURNO",   ACT_GO_NIGHT_CFG, C_BTN, C_ACCENT);
   addButton(20, 118, 200, 34, "REDE E LAMPADA", ACT_GO_NETWORK,   C_BTN, C_ACCENT);
   addButton(20, 158, 200, 34, "AJUSTAR HORA",   ACT_GO_SET_TIME,  C_BTN, C_ACCENT);
@@ -430,51 +456,126 @@ static void valueBox(int cx, int y, int w, int h, const char* v) {
 
 static void drawAlarmConfigScreen() {
   tft.fillScreen(C_BG);
-  drawTitleBar("CONFIG. ALARME");
+  drawTitleBar("OPCOES DO DESPERTAR");
 
-  // Hora e minuto na mesma linha:  [-] 07 [+]  :  [-] 00 [+]
   char buf[8];
-  addButton(6,   34, 30, 34, "-", ACT_ALM_H_DN, C_BTN, C_LINE, C_TEXT, 4);
-  snprintf(buf, sizeof(buf), "%02d", settings.almHour);
-  valueBox(57, 34, 38, 34, buf);
-  addButton(78,  34, 30, 34, "+", ACT_ALM_H_UP, C_BTN, C_LINE, C_TEXT, 4);
-  valueBox(120, 34, 20, 34, ":");
-  addButton(132, 34, 30, 34, "-", ACT_ALM_M_DN, C_BTN, C_LINE, C_TEXT, 4);
-  snprintf(buf, sizeof(buf), "%02d", settings.almMin);
-  valueBox(183, 34, 38, 34, buf);
-  addButton(204, 34, 30, 34, "+", ACT_ALM_M_UP, C_BTN, C_LINE, C_TEXT, 4);
-
-  textAt(6, 78, "ALARME", C_SUBTEXT, C_BG, 2);
-  addChoice(96, 72, 138, 28, settings.almEnabled ? "ATIVO" : "INATIVO",
-            ACT_ALM_TOGGLE, settings.almEnabled);
-
-  textAt(6, 104, "DIFICULDADE", C_SUBTEXT, C_BG, 1);
+  textAt(6, 36, "DIFICULDADE", C_SUBTEXT, C_BG, 1);
   static const char* DL[4] = { "FACIL", "MEDIO", "DIFIC", "EXTR" };
   for (int i = 0; i < 4; i++)
-    addChoice(6 + i * 58, 116, 54, 28, DL[i], ACT_DIFF_0 + i, settings.diffLevel == i);
+    addChoice(6 + i * 58, 48, 54, 28, DL[i], ACT_DIFF_0 + i, settings.diffLevel == i);
 
-  textAt(6, 148, "DESAFIOS (marque 1 ou mais: sorteia)", C_SUBTEXT, C_BG, 1);
+  textAt(6, 82, "DESAFIOS (marque 1 ou mais: sorteia)", C_SUBTEXT, C_BG, 1);
   static const char* TL_[4] = { "MAT", "MEM", "SEQ", "REA" };
   for (int i = 0; i < 4; i++)
-    addChoice(6 + i * 58, 160, 54, 28, TL_[i], ACT_TYPE_0 + i, (settings.chalMask >> i) & 1);
+    addChoice(6 + i * 58, 94, 54, 28, TL_[i], ACT_TYPE_0 + i, (settings.chalMask >> i) & 1);
 
   snprintf(buf, sizeof(buf), "%d%%", settings.lightPct);
-  spinRow(192, 28, "LUZ MAX", buf, ACT_LIGHT_DN, ACT_LIGHT_UP);
+  spinRow(130, 28, "LUZ MAX", buf, ACT_LIGHT_DN, ACT_LIGHT_UP);
 
   static const char* VIBN[4] = { "VIB: OFF", "VIB: FRACA", "VIB: MEDIA", "VIB: MAXIMA" };
-  addChoice(6, 224, 112, 28, VIBN[constrain(settings.vibMode, 0, 3)],
+  addChoice(6, 164, 112, 28, VIBN[constrain(settings.vibMode, 0, 3)],
             ACT_VIB_CYCLE, settings.vibMode != VIB_MODE_OFF);
 
   static char rampLbl[20];
   snprintf(rampLbl, sizeof(rampLbl), "RAMPA %d min", settings.rampMin);
-  addButton(122, 224, 112, 28, rampLbl, ACT_RAMP_CYCLE, C_BTN, TFT_YELLOW);
+  addButton(122, 164, 112, 28, rampLbl, ACT_RAMP_CYCLE, C_BTN, TFT_YELLOW);
 
   static char chLbl[32];
   snprintf(chLbl, sizeof(chLbl), "TEMPO P/ RESOLVER: %d s", settings.chalTimeS);
-  addButton(6, 256, 228, 28, chLbl, ACT_CHTIME_CYCLE, C_BTN, C_ACCENT);
+  addButton(6, 198, 228, 28, chLbl, ACT_CHTIME_CYCLE, C_BTN, C_ACCENT);
 
-  addButton(6,   290, 112, 28, "SALVAR", ACT_SAVE, C_BTN_SEL, C_OK);
-  addButton(122, 290, 112, 28, "VOLTAR", ACT_BACK, C_HEADER, C_LINE);
+  // Desiste sozinho depois de tocar esse tempo (ninguem por perto).
+  static char maxLbl[32];
+  if (settings.ringMaxMin > 0)
+    snprintf(maxLbl, sizeof(maxLbl), "TOCAR NO MAXIMO: %d min", settings.ringMaxMin);
+  else
+    snprintf(maxLbl, sizeof(maxLbl), "TOCAR NO MAXIMO: SEM LIMITE");
+  addButton(6, 232, 228, 28, maxLbl, ACT_RINGMAX_CYCLE, C_BTN, C_WARN);
+
+  addButton(6,   280, 112, 34, "SALVAR", ACT_SAVE, C_BTN_SEL, C_OK);
+  addButton(122, 280, 112, 34, "VOLTAR", ACT_GO_ALARM_LIST, C_HEADER, C_LINE);
+}
+
+/* ─────────────────────── lista de alarmes ──────────────────────── */
+
+static void drawAlarmListScreen() {
+  tft.fillScreen(C_BG);
+  drawTitleBar("ALARMES");
+
+  // Uma linha por alarme: [07:00 SEG-SEX] [ON]. Rotulos em buffers static
+  // porque o piscar do botao redesenha pelo ponteiro.
+  static char rowLbl[MAX_ALARMS][28];
+  for (int i = 0; i < settings.alarmCount && i < MAX_ALARMS; i++) {
+    const Alarm& a = settings.alarms[i];
+    int y = 36 + i * 40;
+    snprintf(rowLbl[i], sizeof(rowLbl[i]), "%02d:%02d  %s", a.hour, a.minute,
+             alarmDaysText(a.days));
+    addButton(6, y, 176, 36, rowLbl[i], ACT_ALM_EDIT_0 + i, C_BTN,
+              a.enabled ? C_ACCENT : C_LINE, a.enabled ? C_TEXT : C_SUBTEXT);
+    addChoice(186, y, 48, 36, a.enabled ? "ON" : "OFF", ACT_ALM_EN_0 + i, a.enabled);
+  }
+  if (settings.alarmCount == 0) {
+    textCentered(110, "Nenhum alarme.", C_SUBTEXT, C_BG, 2);
+    textCentered(132, "Toque em + NOVO.", C_SUBTEXT, C_BG, 2);
+  }
+  if (settings.demoMode)
+    textCentered(266, "modo demo: os alarmes nao gravam", C_WARN, C_BG, 1);
+
+  addButton(6,   280, 74, 34, "+ NOVO", ACT_ALM_NEW, C_BTN_SEL, C_OK);
+  addButton(84,  280, 74, 34, "OPCOES", ACT_GO_ALARM_OPTS, C_BTN, C_ACCENT);
+  addButton(162, 280, 72, 34, "VOLTAR", ACT_BACK, C_HEADER, C_LINE);
+}
+
+/* ─────────────────────── editar um alarme ──────────────────────── */
+
+static void drawAlarmEditScreen() {
+  tft.fillScreen(C_BG);
+  drawTitleBar(alarmDraftIdx < 0 ? "NOVO ALARME" : "EDITAR ALARME");
+  const Alarm& d = alarmDraft;
+
+  // Hora e minuto na mesma linha:  [-] 07 [+]  :  [-] 00 [+]
+  char buf[8];
+  addButton(6,   36, 30, 36, "-", ACT_ALM_H_DN, C_BTN, C_LINE, C_TEXT, 4);
+  snprintf(buf, sizeof(buf), "%02d", d.hour);
+  valueBox(57, 36, 38, 36, buf);
+  addButton(78,  36, 30, 36, "+", ACT_ALM_H_UP, C_BTN, C_LINE, C_TEXT, 4);
+  valueBox(120, 36, 20, 36, ":");
+  addButton(132, 36, 30, 36, "-", ACT_ALM_M_DN, C_BTN, C_LINE, C_TEXT, 4);
+  snprintf(buf, sizeof(buf), "%02d", d.minute);
+  valueBox(183, 36, 38, 36, buf);
+  addButton(204, 36, 30, 36, "+", ACT_ALM_M_UP, C_BTN, C_LINE, C_TEXT, 4);
+
+  textAt(6, 80, "DIAS (nenhum = toca uma vez)", C_SUBTEXT, C_BG, 1);
+  static const char* DN[7] = { "D", "S", "T", "Q", "Q", "S", "S" };
+  for (int i = 0; i < 7; i++)
+    addChoice(6 + i * 33, 92, 30, 32, DN[i], ACT_ALM_DAY_0 + i, (d.days >> i) & 1);
+
+  addChoice(6,   130, 74, 28, "SEG-SEX", ACT_ALM_PRESET_WEEK, d.days == DAYS_WEEK);
+  addChoice(84,  130, 74, 28, "TODOS",   ACT_ALM_PRESET_ALL,  d.days == DAYS_ALL);
+  addChoice(162, 130, 72, 28, "UMA VEZ", ACT_ALM_PRESET_ONCE, d.days == DAYS_ONCE);
+
+  // Resumo em texto, para nao depender de decifrar as letras.
+  static const char* FULL[7] = { "dom", "seg", "ter", "qua", "qui", "sex", "sab" };
+  char sum[48];
+  if (d.days == DAYS_ALL)       snprintf(sum, sizeof(sum), "Toca todos os dias");
+  else if (d.days == DAYS_WEEK) snprintf(sum, sizeof(sum), "Toca de segunda a sexta");
+  else if (d.days == DAYS_ONCE) snprintf(sum, sizeof(sum), "Toca uma vez e se desativa");
+  else {
+    strcpy(sum, "Toca:");
+    for (int k = 1; k <= 7; k++) {
+      int b = k % 7;
+      if (d.days & (1 << b)) { strcat(sum, " "); strcat(sum, FULL[b]); }
+    }
+  }
+  textCentered(168, sum, C_TEXT, C_BG, 2);
+
+  addChoice(6, 194, 228, 32, d.enabled ? "ALARME ATIVO" : "ALARME DESATIVADO",
+            ACT_ALM_TOGGLE, d.enabled);
+
+  addButton(6,   280, 74, 34, "SALVAR", ACT_ALM_SAVE_EDIT, C_BTN_SEL, C_OK);
+  addButton(84,  280, 74, 34, alarmDraftIdx < 0 ? "CANCELAR" : "EXCLUIR",
+            ACT_ALM_DELETE, C_BTN, C_DANGER, alarmDraftIdx < 0 ? C_TEXT : C_DANGER);
+  addButton(162, 280, 72, 34, "VOLTAR", ACT_GO_ALARM_LIST, C_HEADER, C_LINE);
 }
 
 /* ──────────────────────── modo noturno ─────────────────────────── */
@@ -595,20 +696,27 @@ static void drawSetTimeScreen() {
   if (rtc.synced)
     textCentered(94, "sincronizada pela internet", C_WARN, C_BG, 1);
 
-  const int H = 44;
-  textAt(8, 110 + (H - 16) / 2, "HORA", C_SUBTEXT, C_BG, 2);
-  addButton(110, 110, 52, H, "-", ACT_T_H_DN, C_BTN, C_LINE, C_TEXT, 4);
-  addButton(176, 110, 52, H, "+", ACT_T_H_UP, C_BTN, C_LINE, C_TEXT, 4);
+  const int H = 38;
+  textAt(8, 104 + (H - 16) / 2, "HORA", C_SUBTEXT, C_BG, 2);
+  addButton(110, 104, 52, H, "-", ACT_T_H_DN, C_BTN, C_LINE, C_TEXT, 4);
+  addButton(176, 104, 52, H, "+", ACT_T_H_UP, C_BTN, C_LINE, C_TEXT, 4);
 
-  textAt(8, 160 + (H - 16) / 2, "MIN", C_SUBTEXT, C_BG, 2);
-  addButton(110, 160, 52, H, "-", ACT_T_M_DN, C_BTN, C_LINE, C_TEXT, 4);
-  addButton(176, 160, 52, H, "+", ACT_T_M_UP, C_BTN, C_LINE, C_TEXT, 4);
+  textAt(8, 146 + (H - 16) / 2, "MIN", C_SUBTEXT, C_BG, 2);
+  addButton(110, 146, 52, H, "-", ACT_T_M_DN, C_BTN, C_LINE, C_TEXT, 4);
+  addButton(176, 146, 52, H, "+", ACT_T_M_UP, C_BTN, C_LINE, C_TEXT, 4);
 
-  textAt(8, 210 + (H - 16) / 2, "SEG", C_SUBTEXT, C_BG, 2);
-  addButton(110, 210, 52, H, "-", ACT_T_S_DN, C_BTN, C_LINE, C_TEXT, 4);
-  addButton(176, 210, 52, H, "+", ACT_T_S_UP, C_BTN, C_LINE, C_TEXT, 4);
+  textAt(8, 188 + (H - 16) / 2, "SEG", C_SUBTEXT, C_BG, 2);
+  addButton(110, 188, 52, H, "-", ACT_T_S_DN, C_BTN, C_LINE, C_TEXT, 4);
+  addButton(176, 188, 52, H, "+", ACT_T_S_UP, C_BTN, C_LINE, C_TEXT, 4);
 
-  addButton(20, 266, 200, 44, "CONFIRMAR", ACT_T_CONFIRM, C_BTN_SEL, C_OK);
+  // Dia da semana: os alarmes dependem dele. Com internet vem do NTP.
+  char wd[12];
+  snprintf(wd, sizeof(wd), "DIA  %s", wdayShort(rtc.weekday));
+  textAt(8, 230 + (H - 16) / 2, wd, C_ACCENT, C_BG, 2);
+  addButton(110, 230, 52, H, "<", ACT_T_WD_DN, C_BTN, C_LINE, C_TEXT, 4);
+  addButton(176, 230, 52, H, ">", ACT_T_WD_UP, C_BTN, C_LINE, C_TEXT, 4);
+
+  addButton(20, 276, 200, 38, "CONFIRMAR", ACT_T_CONFIRM, C_BTN_SEL, C_OK);
 }
 
 /* ──────────────────── alarme tocando (fase 1) ──────────────────── */
@@ -857,6 +965,8 @@ void uiDrawScreen(Screen s) {
     case SCREEN_SETTINGS:      drawSettingsScreen();    break;
     case SCREEN_SET_TIME:      drawSetTimeScreen();     break;
     case SCREEN_ALARM_CONFIG:  drawAlarmConfigScreen(); break;
+    case SCREEN_ALARM_LIST:    drawAlarmListScreen();   break;
+    case SCREEN_ALARM_EDIT:    drawAlarmEditScreen();   break;
     case SCREEN_NIGHT_CONFIG:  drawNightConfigScreen(); break;
     case SCREEN_NETWORK:       drawNetworkScreen();     break;
     case SCREEN_ALARM_RINGING: drawRingingScreen();     break;

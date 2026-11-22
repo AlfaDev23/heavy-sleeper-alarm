@@ -102,7 +102,7 @@ static void handleRoot() {
 /* Estado completo em JSON (sem a senha do Wi-Fi). */
 static void handleState() {
   String o;
-  o.reserve(900);
+  o.reserve(1400);
   char buf[48];
 
   o += "{\"fw\":"; jsonStr(o, FW_VERSION);
@@ -134,9 +134,28 @@ static void handleState() {
   }
   o += "]}";
 
-  snprintf(buf, sizeof(buf),
-           ",\"alarm\":{\"h\":%d,\"m\":%d,\"en\":%s,", settings.almHour,
-           settings.almMin, settings.almEnabled ? "true" : "false");
+  // Lista de alarmes e o proximo a tocar.
+  o += ",\"alarms\":[";
+  for (int i = 0; i < settings.alarmCount; i++) {
+    const Alarm& a = settings.alarms[i];
+    snprintf(buf, sizeof(buf), "%s{\"h\":%d,\"m\":%d,\"d\":%d,\"en\":%s}",
+             i ? "," : "", a.hour, a.minute, a.days, a.enabled ? "true" : "false");
+    o += buf;
+  }
+  o += ']';
+  long left = 0;
+  int  nx   = alarmNext(settings.alarms, settings.alarmCount, rtc.weekday,
+                        rtc.secondsOfDay(), &left);
+  buf[0] = '\0';
+  if (nx >= 0)
+    snprintf(buf, sizeof(buf), "%s %02d:%02d",
+             wdayShort(alarmWdayIn(rtc.weekday, rtc.secondsOfDay(), left)),
+             settings.alarms[nx].hour, settings.alarms[nx].minute);
+  o += ",\"next\":"; jsonStr(o, buf);
+  o += ",\"wday\":"; o += rtc.weekday;
+  o += ",\"missed\":"; jsonStr(o, appMissedAlarm());
+
+  snprintf(buf, sizeof(buf), ",\"alarm\":{\"ringMax\":%d,", settings.ringMaxMin);
   o += buf;
   snprintf(buf, sizeof(buf), "\"diff\":%d,\"mask\":%d,\"chal\":%d,",
            settings.diffLevel, settings.chalMask, settings.chalTimeS);
@@ -161,7 +180,8 @@ static void handleState() {
   sendJson(200, o);
 }
 
-/* Grava alarme, luz, modo noturno, IP da lampada e fuso. */
+/* Grava as opcoes do despertar, luz, modo noturno, IP da lampada e fuso.
+   A lista de alarmes tem rota propria (/api/alarms). */
 static void handleSave() {
   if (appAlarmBusy()) {
     sendError(409, "Alarme tocando: resolva o desafio primeiro");
@@ -171,12 +191,14 @@ static void handleSave() {
   Settings s = settings;          // so aplica se tudo validar
   int v;
 
-  if (server.hasArg("almTime")) {
-    v = parseHm(server.arg("almTime"));
-    if (v < 0) { sendError(400, "Horario do alarme invalido"); return; }
-    s.almHour = v / 60; s.almMin = v % 60;
+  if (server.hasArg("ringMax")) {
+    static const int RMAX[RING_MAX_COUNT] = RING_MAX_OPTS;
+    bool ok = argInt("ringMax", 0, 600, v);
+    bool in = false;
+    for (int i = 0; ok && i < RING_MAX_COUNT; i++) if (RMAX[i] == v) in = true;
+    if (!in) { sendError(400, "Tempo maximo invalido"); return; }
+    s.ringMaxMin = v;
   }
-  if (server.hasArg("almEn")) s.almEnabled = server.arg("almEn") == "1";
   if (argInt("diff",  0, 3, v))   s.diffLevel = v;
   if (server.hasArg("chalMask")) {
     if (!argInt("chalMask", 1, CHAL_MASK_ALL, v)) {
@@ -231,6 +253,53 @@ static void handleSave() {
   storageSave();
   if (netChanged) storageSaveNet();
   appSettingsChanged();
+  sendOk();
+}
+
+/* Substitui a lista de alarmes. list = "HH:MM,ativo,dias;..." (ate 6).
+   dias = mascara 0-127 (bit 0 = domingo); 0 = toca uma vez. */
+static void handleAlarms() {
+  if (appAlarmBusy()) {
+    sendError(409, "Alarme tocando: resolva o desafio primeiro");
+    return;
+  }
+  if (!server.hasArg("list")) { sendError(400, "Falta a lista de alarmes"); return; }
+
+  String L = server.arg("list");
+  Alarm  tmp[MAX_ALARMS];
+  int    n   = 0;
+  int    pos = 0;
+  memset(tmp, 0, sizeof(tmp));
+  while (pos < (int)L.length()) {
+    int end = L.indexOf(';', pos);
+    if (end < 0) end = L.length();
+    String item = L.substring(pos, end);
+    pos = end + 1;
+    item.trim();
+    if (item.length() == 0) continue;
+    if (n >= MAX_ALARMS) { sendError(400, "No maximo 6 alarmes"); return; }
+
+    int c1 = item.indexOf(',');
+    int c2 = c1 < 0 ? -1 : item.indexOf(',', c1 + 1);
+    if (c2 < 0) { sendError(400, "Alarme invalido"); return; }
+    int hm = parseHm(item.substring(0, c1));
+    int en = item.substring(c1 + 1, c2).toInt();
+    int d  = item.substring(c2 + 1).toInt();
+    if (hm < 0 || en < 0 || en > 1 || d < 0 || d > DAYS_ALL) {
+      sendError(400, "Alarme invalido"); return;
+    }
+    tmp[n].hour    = hm / 60;
+    tmp[n].minute  = hm % 60;
+    tmp[n].days    = d;
+    tmp[n].enabled = en;
+    n++;
+  }
+
+  settings.alarmCount = n;
+  memcpy(settings.alarms, tmp, sizeof(tmp));
+  storageSave();
+  appSettingsChanged();
+  Serial.printf("[PORTAL] %d alarme(s) salvos\n", n);
   sendOk();
 }
 
@@ -348,6 +417,7 @@ void portalBegin() {
   server.on("/",                  HTTP_GET,  handleRoot);
   server.on("/api/state",         HTTP_GET,  handleState);
   server.on("/api/save",          HTTP_POST, handleSave);
+  server.on("/api/alarms",        HTTP_POST, handleAlarms);
   server.on("/api/mode",          HTTP_POST, handleMode);
   server.on("/api/vib/test",      HTTP_POST, handleVibTest);
   server.on("/api/scan",          HTTP_GET,  handleScan);

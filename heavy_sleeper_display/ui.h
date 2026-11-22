@@ -27,16 +27,30 @@ enum UiAction {
   ACT_DEMO_TOGGLE,      // alterna demo <-> producao
   ACT_BACK,
 
-  /* configuracao do alarme */
+  /* lista de alarmes */
+  ACT_GO_ALARM_LIST,
+  ACT_GO_ALARM_OPTS,
+  ACT_ALM_NEW,
+  ACT_ALM_EDIT_0, ACT_ALM_EDIT_LAST = ACT_ALM_EDIT_0 + 5,   // MAX_ALARMS = 6
+  ACT_ALM_EN_0,   ACT_ALM_EN_LAST   = ACT_ALM_EN_0 + 5,
+
+  /* edicao de um alarme */
   ACT_ALM_H_UP, ACT_ALM_H_DN,
   ACT_ALM_M_UP, ACT_ALM_M_DN,
   ACT_ALM_TOGGLE,
+  ACT_ALM_DAY_0, ACT_ALM_DAY_LAST = ACT_ALM_DAY_0 + 6,      // dom..sab
+  ACT_ALM_PRESET_WEEK, ACT_ALM_PRESET_ALL, ACT_ALM_PRESET_ONCE,
+  ACT_ALM_SAVE_EDIT,
+  ACT_ALM_DELETE,
+
+  /* opcoes do despertar */
   ACT_DIFF_0, ACT_DIFF_1, ACT_DIFF_2, ACT_DIFF_3,
   ACT_TYPE_0, ACT_TYPE_1, ACT_TYPE_2, ACT_TYPE_3,
   ACT_LIGHT_UP, ACT_LIGHT_DN,
   ACT_VIB_CYCLE,
   ACT_RAMP_CYCLE,
   ACT_CHTIME_CYCLE,
+  ACT_RINGMAX_CYCLE,
   ACT_SAVE,
 
   /* modo noturno */
@@ -53,6 +67,7 @@ enum UiAction {
   ACT_T_H_UP, ACT_T_H_DN,
   ACT_T_M_UP, ACT_T_M_DN,
   ACT_T_S_UP, ACT_T_S_DN,
+  ACT_T_WD_UP, ACT_T_WD_DN,
   ACT_T_CONFIRM,
 
   /* alarme tocando */
@@ -60,8 +75,11 @@ enum UiAction {
   ACT_DISMISS_HOLD,     // area do DESLIGAR (o .ino mede o tempo segurado)
   ACT_EARLY_TAP,        // tocou antes do estimulo aparecer (reacao)
 
+  ACT_LAST_FIXED,
+
   ACT_OPT_BASE = 100   // ACT_OPT_BASE + i = alternativa i do desafio
 };
+static_assert(ACT_LAST_FIXED < ACT_OPT_BASE, "acoes demais: suba ACT_OPT_BASE");
 
 /* Botao DESLIGAR da tela de alarme tocando (o .ino testa o dedo nele). */
 #define DISMISS_X  20

@@ -16,6 +16,10 @@ void appSettingsChanged();
 /* True se a rampa de nascer do sol esta acendendo a lampada agora. */
 bool appSunriseActive();
 
+/* Aviso de alarme que parou sozinho por tempo maximo ("" = nenhum).
+   Some no proximo toque na tela. */
+const char* appMissedAlarm();
+
 /* Troca entre demo e producao sem recompilar (tela AJUSTES ou portal).
    Recusa (false) com o alarme tocando ou no desafio. */
 bool appSetDemo(bool on);
