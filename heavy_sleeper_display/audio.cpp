@@ -41,8 +41,19 @@ void audioDisable() {
   gAmpOn = false;
 }
 
-/* Amplitude (pico a pico) por nivel — funciona como "volume". */
-static const uint8_t LEVEL_AMP[5] = { 0, 60, 110, 180, 230 };
+/* Amplitude (pico a pico) por nivel — funciona como "volume". Calculada
+   por audioSetVolume() a partir do volume inicial e maximo do portal. */
+#define AMP_MAX 254                      // 128 +- 127: o maximo sem estourar
+static volatile uint8_t LEVEL_AMP[5] = { 0, 60, 110, 180, 230 };
+
+/* Teste do portal: nivel 5 = toca a melodia gTestMelody na amplitude gTestAmp. */
+#define LEVEL_TEST 5
+static volatile int     gTestMelody = 1;
+static volatile uint8_t gTestAmp    = 0;
+
+static uint8_t pctToAmp(int pct) {
+  return (uint8_t)((constrain(pct, 0, 100) * AMP_MAX + 50) / 100);
+}
 
 /* True se o nivel mudou desde o inicio da nota (para abortar rapido). */
 static inline bool levelChanged(int snapshot) {
@@ -97,19 +108,17 @@ static void toneWithAmp(int freq, int durationMs, uint8_t amp, int snapshot) {
 void playTone(int frequencyHz, int durationMs) {
   int snap = gLevel;
   uint8_t amp = LEVEL_AMP[constrain(snap, 0, 4)];
-  if (amp == 0) amp = 110;   // se chamado fora do alarme, usa volume medio
+  if (amp == 0) amp = LEVEL_AMP[2];   // fora do alarme: volume do nivel 2
   audioEnable();             // sem o amp habilitado nao sai som no speaker
   toneWithAmp(frequencyHz, durationMs, amp, snap);
 }
 
-/* Toca um ciclo da melodia correspondente ao nivel (1..4). */
-void playAlarmMelody(int level) {
-  const int snap = level;
-  const uint8_t amp = LEVEL_AMP[constrain(level, 0, 4)];
-
+/* Um ciclo da melodia `melody` (1..4) na amplitude dada. snap = nivel que
+   estava valendo ao comecar: se gLevel mudar, a nota e interrompida. */
+static void melodyCycle(int melody, uint8_t amp, int snap) {
   audioEnable();
 
-  switch (level) {
+  switch (melody) {
     case 1: {   // suave: 440, 494, 523 — lento, com pausa
       static const int n1[] = { 440, 494, 523 };
       for (int i = 0; i < 3 && !levelChanged(snap); i++) {
@@ -146,6 +155,12 @@ void playAlarmMelody(int level) {
       restMs(50, snap);
       break;
   }
+}
+
+/* Toca um ciclo da melodia correspondente ao nivel (1..4). */
+void playAlarmMelody(int level) {
+  if (level == LEVEL_TEST) { melodyCycle(gTestMelody, gTestAmp, LEVEL_TEST); return; }
+  melodyCycle(level, LEVEL_AMP[constrain(level, 0, 4)], level);
 }
 
 /*
@@ -187,6 +202,22 @@ void audioInit() { audioBegin(); }
 /* Define a intensidade do som (0 silencia). */
 void audioSetLevel(int level) {
   gLevel = constrain(level, 0, 4);
+}
+
+/* Volume inicial (nivel 1) e maximo (nivel 4), em %; 2 e 3 interpolados. */
+void audioSetVolume(int startPct, int maxPct) {
+  startPct = constrain(startPct, 0, 100);
+  maxPct   = constrain(maxPct, startPct, 100);
+  for (int lv = 1; lv <= 4; lv++)
+    LEVEL_AMP[lv] = pctToAmp(startPct + (maxPct - startPct) * (lv - 1) / 3);
+}
+
+/* Teste do portal: toca a melodia do nivel `melody` no volume pct ate
+   alguem chamar stopAudio() ou audioSetLevel(). */
+void audioTest(int melody, int pct) {
+  gTestMelody = constrain(melody, 1, 4);
+  gTestAmp    = pctToAmp(pct);
+  gLevel      = LEVEL_TEST;
 }
 
 /* Nivel de audio corrente. */

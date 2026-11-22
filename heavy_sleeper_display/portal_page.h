@@ -7,6 +7,7 @@
  *   POST /api/save           opcoes (chalMask = tipos marcados, ringMax), lampada, modo noturno e fuso
  *   POST /api/mode           demo=1 (demonstracao) / demo=0 (producao)
  *   POST /api/vib/test       duty=0-100: vibra 2 s nessa intensidade
+ *   POST /api/sound/test     lvl=1|4, pct=0-100: toca 2 s a melodia nesse volume
  *   GET  /api/scan           redes Wi-Fi proximas
  *   POST /api/wifi           grava SSID/senha e reconecta
  *   POST /api/wifi/forget    apaga a rede salva
@@ -96,6 +97,13 @@ output{float:right;color:var(--tx)}
 <p class="sub">Se a lampada nao responder, ligue a opcao de comunicacao local no app WiZ. Reservar o IP dela no roteador evita que ele mude.</p>
 </section>
 
+<section><h2>Volume do alarme</h2>
+<p class="sub">O som comeca no volume inicial e sobe ate o maximo conforme o alarme escala (2, 5 e 10 min). <b>Testar</b> toca 2 s a melodia daquele momento, sem salvar.</p>
+<div class="vib"><label>Inicial <output id="o_volS"></output></label><div class="row"><input type="range" name="volS" min="5" max="100" step="5" oninput="vo(this);vfix(this)"><button type="button" class="small" onclick="st(1,'volS')">Testar</button></div></div>
+<div class="vib"><label>Maximo <output id="o_volX"></output></label><div class="row"><input type="range" name="volX" min="5" max="100" step="5" oninput="vo(this);vfix(this)"><button type="button" class="small" onclick="st(4,'volX')">Testar</button></div></div>
+<p class="sub">Acima de ~90% o alto-falante do board pode distorcer.</p>
+</section>
+
 <section><h2>Intensidade da vibracao</h2>
 <p class="sub">PWM do motor em cada nivel. Mexa no controle e toque em <b>Testar</b> (vibra 2 s, sem salvar). Achou o ponto? <b>Salvar configuracoes</b>.</p>
 <div class="vib"><label>Fraca <output id="o_vibW"></output></label><div class="row"><input type="range" name="vibW" min="0" max="100" step="5" oninput="vo(this)"><button type="button" class="small" onclick="vt('vibW')">Testar</button></div></div>
@@ -157,7 +165,7 @@ async function saveAlms(){const b=new URLSearchParams();b.set('list',A.map(a=>hm
 if(await post('/api/alarms','Alarmes salvos',b)){aLoaded=false}}
 function fill(s){const a=s.alarm,n=s.night;F.ringMax.value=a.ringMax;document.querySelectorAll('.tchk').forEach(c=>c.checked=!!(a.mask>>c.value&1));F.diff.value=a.diff;
 F.chal.value=a.chal;F.vib.value=a.vib;F.ramp.value=a.ramp;F.light.value=a.light;$('#lv').value=a.light+'%';
-['vibW','vibM','vibX'].forEach((k,i)=>{F[k].value=a.vibD[i];vo(F[k])});F.wizIp.value=s.wiz.cfgIp;F.nightMode.value=n.mode;F.nightStart.value=hm(n.start);F.nightEnd.value=hm(n.end);F.tz.value=s.tz}
+['vibW','vibM','vibX'].forEach((k,i)=>{F[k].value=a.vibD[i];vo(F[k])});F.volS.value=a.volS;F.volX.value=a.volX;vo(F.volS);vo(F.volX);F.wizIp.value=s.wiz.cfgIp;F.nightMode.value=n.mode;F.nightStart.value=hm(n.start);F.nightEnd.value=hm(n.end);F.tz.value=s.tz}
 function show(s){const N=s.net,W=s.wiz;$('#hdr').textContent=N.state==='CONECTADO'?('Na rede '+N.ssid+' - '+N.ip):(N.ap?('Portal: '+N.apSsid):N.state);
 $('#s_next').innerHTML=s.missed?'<span class="bad">'+esc(s.missed)+'</span>':(s.next?esc(s.next):'<span class="sub">nenhum ativo</span>');
 $('#s_time').innerHTML=esc(['DOM','SEG','TER','QUA','QUI','SEX','SAB'][s.wday]||'')+' '+esc(s.time)+(s.ntp?' <span class="ok">(internet)</span>':' <span class="warn">(manual)</span>');
@@ -174,6 +182,8 @@ async function save(e){e.preventDefault();let m=0;document.querySelectorAll('.tc
 if(!m){toast('Marque pelo menos 1 tipo de desafio');return false}const b=new URLSearchParams(new FormData(F));b.set('chalMask',m);
 if(await post('/api/save','Configuracoes salvas',b)){loaded=false}return false}
 function vo(e){$('#o_'+e.name).value=e.value+'%'}
+function vfix(e){if(+F.volS.value>+F.volX.value){if(e.name=='volS'){F.volX.value=F.volS.value;vo(F.volX)}else{F.volS.value=F.volX.value;vo(F.volS)}}}
+function st(l,k){const b=new URLSearchParams();b.set('lvl',l);b.set('pct',F[k].value);post('/api/sound/test','Tocando '+F[k].value+'% por 2 s',b)}
 function vt(k){const b=new URLSearchParams();b.set('duty',F[k].value);post('/api/vib/test','Vibrando '+F[k].value+'% por 2 s',b)}
 async function mode(){const on=!demo;if(!confirm(on?'Ligar o DEMO? O relogio vai para 07:29 e o alarme toca as 07:30.':'Voltar para PRODUCAO? A hora volta a vir da internet e o alarme salvo volta.'))return;
 const b=new URLSearchParams();b.set('demo',on?'1':'0');if(await post('/api/mode',on?'Modo DEMO':'Modo PRODUCAO',b)){loaded=false}}

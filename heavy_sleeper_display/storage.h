@@ -17,6 +17,8 @@ struct Settings {
   int  lightPct;     // brilho maximo da lampada WiZ, 10-100
   int  vibMode;      // VibMode 0-3: desligada / fraca / media / maxima
   int  vibDuty[3];   // PWM em % da vibracao fraca, media e maxima
+  int  volStart;     // volume do som no inicio do alarme (%)
+  int  volMax;       // volume do som no fim da escalada (%)
   int  snoozeCount;  // sonecas usadas hoje
   int  lastAlarmDay; // indice do dia do ultimo alarme (reset do snoozeCount)
 

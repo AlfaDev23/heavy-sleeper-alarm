@@ -70,6 +70,7 @@ static bool          flashState    = false;
 static unsigned long lastStatusMs  = 0;
 static unsigned long resolveAtMs   = 0;     // fim da tela CORRETO!/ERROU
 static unsigned long vibTestUntil  = 0;     // fim do "Testar" da vibracao
+static unsigned long soundTestUntil = 0;    // fim do "Testar" do volume
 static int           lastChalType  = -1;    // ultimo tipo sorteado
 static int           firedMin      = -1;    // minuto do dia em que disparou
 static char          missedTxt[40] = "";    // "Alarme das 07:00 nao atendido"
@@ -101,6 +102,14 @@ bool appVibTest(int percent) {
   commSendVibDuty(percent);
   commSendVib("ON");
   vibTestUntil = millis() + VIB_TEST_MS;
+  return true;
+}
+
+/* Teste de volume pedido pelo portal. O loop corta em SOUND_TEST_MS. */
+bool appSoundTest(int melody, int pct) {
+  if (alState != AL_IDLE) return false;
+  audioTest(melody, pct);
+  soundTestUntil = millis() + SOUND_TEST_MS;
   return true;
 }
 
@@ -188,6 +197,8 @@ static void applyStimuli(int st) {
     commSendVib((st <= 1 || top == 0) ? "PULSE" : "ON");
   }
 
+  soundTestUntil = 0;
+  audioSetVolume(settings.volStart, settings.volMax);   // volume do portal
   audioSetLevel(st);
 }
 
@@ -849,6 +860,12 @@ void loop() {
     uiRingingUpdate(stage, ringElapsed(), effectiveLevel(), flashState);
   } else if (alState == AL_CHALLENGE) {
     updateChallenge();
+  }
+
+  /* Fim do teste de volume do portal. */
+  if (soundTestUntil && (long)(millis() - soundTestUntil) >= 0) {
+    soundTestUntil = 0;
+    if (alState == AL_IDLE) stopAudio();
   }
 
   /* Fim do teste de vibracao do portal. */

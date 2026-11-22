@@ -1,4 +1,4 @@
-# Despertador Heavy Sleepers — v0.5.0-alpha
+# Despertador Heavy Sleepers — v0.5.1-alpha
 
 Despertador para quem tem sono pesado, com dois ESP32 conversando por UART.
 Combina luz gradual (lâmpada Wi-Fi WiZ), vibração, som crescente e desafios
@@ -23,6 +23,8 @@ WIRING.md                  esquema de ligação
    apagam e o relógio mostra "Alarme das 07:00 não atendido".
 3. O relógio agora sabe o **dia da semana** (pela internet, ou acertado em
    AJUSTAR HORA).
+4. **Volume do alarme no portal** (v0.5.1): volume inicial e máximo, com
+   botão para ouvir antes de salvar.
 
 ## Novidades da v0.4
 
@@ -294,6 +296,17 @@ A vibração nunca passa do nível escolhido em **Vibração** (tela ou portal):
 *Fraca* fica só nos pulsos fracos, *Média* para na média e *Máxima* vai até
 o fim.
 
+### Volume do alarme
+
+O som começa no **volume inicial** e sobe até o **volume máximo** conforme o
+alarme escala; os níveis 2 e 3 ficam no meio do caminho. Ajuste no portal,
+seção **Volume do alarme** (5 a 100%, padrão **25% / 90%**, o mesmo som das
+versões anteriores). O botão **Testar** toca 2 s a melodia daquele momento
+(a do início é mais grave, a do fim é um sweep agudo) no volume do
+controle, **sem salvar**; depois, *Salvar configurações*. O máximo não pode
+ficar abaixo do inicial. Acima de ~90% o alto-falante do board pode
+distorcer. O teste é recusado com o alarme tocando.
+
 ### Intensidade da vibração (PWM)
 
 O PWM de cada nível depende do motor, então é ajustado **no portal**, seção
@@ -404,9 +417,10 @@ POST /api/alarms          list=HH:MM,ativo,dias;...  (até 6; dias = máscara
                           0-127, bit 0 = domingo; 0 = uma vez)
 POST /api/save            ringMax (0/5/10/15/20/30), chalMask (bits 1=MAT
                           2=MEM 4=SEQ 8=REA), diff, chal, vib (0-3), vibW,
-                          vibM, vibX (PWM %), ramp, light, wizIp, nightMode,
+                          vibM, vibX (PWM %), volS, volX (volume %), ramp, light, wizIp, nightMode,
                           nightStart, nightEnd, tz
 POST /api/vib/test        duty=0-100 → vibra 2 s (não salva)
+POST /api/sound/test      lvl=1|4, pct=0-100 → toca 2 s (não salva)
 POST /api/mode            demo=1 (demo) / demo=0 (producao)
 GET  /api/scan            redes Wi-Fi (assíncrono: repita até scanning=false)
 POST /api/wifi            ssid, pass → grava e reconecta
