@@ -7,7 +7,7 @@
 
 #include <Arduino.h>
 
-#define FW_VERSION "0.4.1-alpha"
+#define FW_VERSION "0.5.0-alpha"
 
 /* ═══════════════════════════════════════════════════════════════════
    MODO DEMO x PRODUCAO
@@ -26,7 +26,7 @@
 #define DEMO_START_M  29
 #define DEMO_START_S  0
 #define DEMO_ALM_H    7      // ... e o alarme dispara em ~1 minuto
-#define DEMO_ALM_M    30
+#define DEMO_ALM_M    30     // (no demo a lista vira so este alarme, todo dia)
 // Tempos curtos no demo (20/45/80 s, soneca 30 s, rampa 45 s), senao a
 // apresentacao levaria 10 minutos. Use 0 para o demo com os tempos reais.
 #define DEMO_FAST_TIMES 1
@@ -118,6 +118,14 @@ bool demoFastTimes();
 #define ESC_T2_MS  (demoFastTimes() ? 45000UL : ALARM_ESCALATE_5MIN  * 60000UL) // estagio 3
 #define ESC_T3_MS  (demoFastTimes() ? 80000UL : ALARM_ESCALATE_10MIN * 60000UL) // estagio 4
 #define SNOOZE_MS  (demoFastTimes() ? 30000UL : ALARM_SNOOZE_MIN     * 60000UL)
+
+/* Tempo maximo TOCANDO (min) antes de desistir sozinho — para quando nao
+   ha ninguem por perto. 0 = sem limite. So conta o tempo tocando: o tempo
+   resolvendo o desafio nao entra. No demo com tempos curtos vale 2 min. */
+#define RING_MAX_OPTS     { 0, 5, 10, 15, 20, 30 }
+#define RING_MAX_COUNT    6
+#define RING_MAX_DEFAULT  10
+#define RING_MAX_DEMO_MS  120000UL
 
 /* PWM (%) de cada intensidade da vibracao: fraca, media, maxima. Padrao de
    fabrica; o valor certo depende do motor e e ajustado no portal. */
@@ -221,7 +229,9 @@ enum Screen {
   SCREEN_CLOCK = 0,
   SCREEN_SETTINGS,
   SCREEN_SET_TIME,
-  SCREEN_ALARM_CONFIG,
+  SCREEN_ALARM_CONFIG,     // opcoes do despertar (desafio, luz, vibracao...)
+  SCREEN_ALARM_LIST,       // lista de alarmes
+  SCREEN_ALARM_EDIT,       // editar um alarme: hora, dias, ativo
   SCREEN_NIGHT_CONFIG,     // modo noturno: AUTO / DIA / NOITE e horarios
   SCREEN_NETWORK,          // Wi-Fi, portal e lampada WiZ
   SCREEN_ALARM_RINGING,    // tocando: segure DESLIGAR ou soneca

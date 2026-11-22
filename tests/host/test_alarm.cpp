@@ -13,13 +13,16 @@
 #include "src/config.h"
 #include "src/clock.h"
 #include "src/storage.h"
+#include "src/alarms.h"
 #include "src/challenges.h"
 #include "src/ui.h"
 extern bool g_tapPending; extern int g_action;
 static void tap(int a){ g_action=a; g_tapPending=true; }
 extern unsigned long g_ms; extern Screen g_screen; extern bool g_night,g_wizOn,g_down; extern int g_dim,g_temp,g_audio,g_tx,g_ty,g_rightSeen,g_wrongSeen,g_timeoutSeen; extern const char* g_vib;
-void setup(); void loop(); bool appAlarmBusy(); bool appSetDemo(bool);
+void setup(); void loop(); bool appAlarmBusy(); bool appSetDemo(bool); const char* appMissedAlarm();
 static int fails=0;
+// Um alarme so, todos os dias (como as versoes antigas).
+static void setAlarm(int h,int m,bool en=true){ settings.alarmCount=1; settings.alarms[0]={(uint8_t)h,(uint8_t)m,DAYS_ALL,(uint8_t)en}; }
 #define CHECK(c,msg) do{ if(c) printf("  ok   %s\n",msg); else {printf("  FAIL %s\n",msg); fails++;} }while(0)
 static void run(unsigned long ms){ unsigned long end=g_ms+ms; while(g_ms<end){ g_ms+=5; loop(); } }
 static void hold(bool d){ g_down=d; g_tx=DISMISS_X+50; g_ty=DISMISS_Y+40; }
@@ -31,7 +34,7 @@ static void wrong(){ const Challenge&c=challengeCurrent(); int guard=0; while(c.
   int bad=(c.expected[c.entered]+1)%c.optCount; challengeTouchIndex(bad); }
 int main(){
   setup();
-  settings.almHour=7; settings.almMin=0; settings.almEnabled=true; settings.rampMin=10; settings.lightPct=80;
+  setAlarm(7,0); settings.rampMin=10; settings.lightPct=80;
   settings.chalTimeS=60; settings.chalMask=1<<TEST_CHAL_TYPE; settings.vibMode=VIB_MODE_MAX; settings.nightMode=NIGHT_AUTO;
   rtc.setTime(6,49,0); rtc.lastTickMs=g_ms;
   printf("A) nascer do sol\n");
@@ -70,18 +73,18 @@ int main(){
   CHECK(g_screen==SCREEN_CLOCK && !appAlarmBusy(),"voltou ao relogio, alarme encerrado");
   CHECK(g_wizOn && g_audio==0,"luz acesa, som desligado");
   printf("G) soneca apaga a luz e retoca\n");
-  rtc.setTime(8,0,0); settings.almHour=8; settings.almMin=2; // proximo alarme 08:02
+  rtc.setTime(8,0,0); setAlarm(8,2); // proximo alarme 08:02
   run(130000); CHECK(g_screen==SCREEN_ALARM_RINGING,"08:02 tocou");
   tap(ACT_SNOOZE); run(100);
   CHECK(!g_wizOn && g_screen==SCREEN_CLOCK,"soneca: luz apagada, relogio");
   run(5*60000+1000); CHECK(g_screen==SCREEN_ALARM_RINGING && g_wizOn,"soneca venceu: toca com luz");
   hold(true); run(2100); hold(false); solve(); run(2000);
   printf("H) cancelar rampa no meio apaga\n");
-  rtc.setTime(9,0,0); settings.almHour=9; settings.almMin=5; settings.rampMin=10; run(3000);
+  rtc.setTime(9,0,0); setAlarm(9,5); settings.rampMin=10; run(3000);
   CHECK(g_wizOn,"dentro da rampa: lampada ligada (estado anterior ou rampa)");
-  settings.almEnabled=false; run(1500); CHECK(!g_wizOn,"alarme desativado no meio: lampada apagada");
+  settings.alarms[0].enabled=0; run(1500); CHECK(!g_wizOn,"alarme desativado no meio: lampada apagada");
   printf("I) modo noturno\n");
-  settings.almEnabled=false; rtc.setTime(21,59,57); run(1500); CHECK(!g_night && g_screen==SCREEN_CLOCK,"21:59 tema normal");
+  settings.alarms[0].enabled=0; rtc.setTime(21,59,57); run(1500); CHECK(!g_night && g_screen==SCREEN_CLOCK,"21:59 tema normal");
   run(3000); CHECK(g_night,"22:00 entrou no modo noturno");
   tap(ACT_NIGHT_PEEK); run(100); CHECK(!g_night,"toque: espia o tema normal");
   run(11200); CHECK(g_night,"10 s depois volta ao noturno");
@@ -93,9 +96,9 @@ int main(){
   run(61000); CHECK(g_screen==SCREEN_CLOCK,"1 min sem toque: relogio");
   printf("K) demo <-> producao sem recompilar\n");
   CHECK(!settings.demoMode,"comeca em producao");
-  settings.nightMode=NIGHT_FORCE_DAY; settings.almHour=6; settings.almMin=15; settings.almEnabled=true; storageSave();
+  settings.nightMode=NIGHT_FORCE_DAY; setAlarm(6,15); storageSave();
   CHECK(appSetDemo(true) && settings.demoMode,"liga o demo");
-  CHECK(rtc.hour==7 && rtc.minute==29 && settings.almHour==7 && settings.almMin==30,"demo: relogio 07:29, alarme 07:30");
+  CHECK(rtc.hour==7 && rtc.minute==29 && settings.alarms[0].hour==7 && settings.alarms[0].minute==30,"demo: relogio 07:29, alarme 07:30");
   storageSave();   // salvar no demo nao pode sobrescrever o alarme de verdade
   run(20000); CHECK(g_wizOn,"07:29:20 rampa curta do demo acendeu");
   run(41000); CHECK(g_screen==SCREEN_ALARM_RINGING,"07:30 tocou");
@@ -104,7 +107,7 @@ int main(){
   hold(true); run(2100); hold(false); solve(); run(2000);
   CHECK(!appAlarmBusy(),"desafio resolvido");
   CHECK(appSetDemo(false) && !settings.demoMode,"volta para producao");
-  CHECK(settings.almHour==6 && settings.almMin==15 && settings.almEnabled,"alarme de verdade (06:15) voltou");
+  CHECK(settings.alarmCount==1 && settings.alarms[0].hour==6 && settings.alarms[0].minute==15 && settings.alarms[0].enabled,"alarme de verdade (06:15) voltou");
   CHECK(rtc.hour==0 && !rtc.synced,"relogio zerado esperando o NTP");
   rtc.setTime(6,14,50); run(11000); CHECK(g_screen==SCREEN_ALARM_RINGING,"06:15 tocou em producao");
   run(21000); CHECK(g_audio==1,"producao: 20 s tocando ainda estagio 1");
@@ -114,6 +117,39 @@ int main(){
     CHECK(seen==0x0B,"sorteou MAT, MEM e REA (e nunca SEQ)");
     CHECK(rep==0,"nunca repetiu o tipo anterior");
     CHECK(challengePickType(1<<CHAL_SEQUENCE, CHAL_SEQUENCE)==CHAL_SEQUENCE,"um tipo so: sempre ele"); }
+  hold(true); run(2100); hold(false); solve(); run(2000);
+  printf("M) dias da semana e varios alarmes\n");
+  settings.ringMaxMin=10;
+  settings.alarmCount=2;
+  settings.alarms[0]={6,30,DAYS_WEEK,1};    // seg-sex 06:30
+  settings.alarms[1]={9,0,DAYS_WEEKEND,1};  // sab-dom 09:00
+  rtc.setWeekday(6); rtc.setTime(6,29,50); run(15000);
+  CHECK(g_screen==SCREEN_CLOCK && !appAlarmBusy(),"sabado 06:30: alarme seg-sex nao toca");
+  rtc.setTime(8,59,50); run(15000);
+  CHECK(g_screen==SCREEN_ALARM_RINGING,"sabado 09:00: alarme de fim de semana tocou");
+  hold(true); run(2100); hold(false); solve(); run(2000);
+  rtc.setWeekday(1); rtc.setTime(6,29,50); run(15000);
+  CHECK(g_screen==SCREEN_ALARM_RINGING,"segunda 06:30: alarme seg-sex tocou");
+  hold(true); run(2100); hold(false); solve(); run(2000);
+  { long s; int i=alarmNext(settings.alarms,2,5,22*3600L,&s);           // sexta 22:00
+    CHECK(i==1 && alarmWdayIn(5,22*3600L,s)==6,"sexta a noite: proximo e sabado 09:00"); }
+  printf("N) uma vez: toca e se desativa\n");
+  settings.alarmCount=1; settings.alarms[0]={10,0,DAYS_ONCE,1};
+  rtc.setWeekday(3); rtc.setTime(9,59,50); run(15000);
+  CHECK(g_screen==SCREEN_ALARM_RINGING && !settings.alarms[0].enabled,"tocou e ficou desativado");
+  hold(true); run(2100); hold(false); solve(); run(2000);
+  rtc.setWeekday(4); rtc.setTime(9,59,50); run(15000);
+  CHECK(g_screen==SCREEN_CLOCK,"no dia seguinte nao toca mais");
+  printf("O) tempo maximo tocando\n");
+  setAlarm(11,0); settings.ringMaxMin=10; rtc.setTime(10,59,58); run(3000);
+  CHECK(g_screen==SCREEN_ALARM_RINGING,"11:00 tocou");
+  run(9*60000); CHECK(appAlarmBusy(),"9 min: ainda tocando");
+  run(61000); CHECK(!appAlarmBusy() && g_screen==SCREEN_CLOCK && g_audio==0 && !g_wizOn,"10 min sem ninguem: parou sozinho, luz apagada");
+  CHECK(appMissedAlarm()[0]!=0,"aviso de alarme nao atendido");
+  tap(ACT_NIGHT_PEEK); run(100); CHECK(appMissedAlarm()[0]==0,"um toque apaga o aviso");
+  setAlarm(12,0); settings.ringMaxMin=0; rtc.setTime(11,59,58); run(3000);
+  run(15*60000); CHECK(appAlarmBusy(),"sem limite: 15 min depois ainda toca");
+  hold(true); run(2100); hold(false); solve(); run(2000);
   printf("\n%s (%d falhas)\n", fails?"FALHOU":"TUDO OK", fails);
   return fails;
   return 0;

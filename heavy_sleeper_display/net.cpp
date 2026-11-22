@@ -177,7 +177,7 @@ void netUpdate() {
       time_t    epoch = time(nullptr);
       localtime_r(&epoch, &t);
       bool first = !rtc.synced;
-      rtc.syncTo(t.tm_hour, t.tm_min, t.tm_sec);
+      rtc.syncTo(t.tm_hour, t.tm_min, t.tm_sec, t.tm_wday);
       if (first) Serial.printf("[NET] hora pelo NTP: %02d:%02d:%02d\n",
                                t.tm_hour, t.tm_min, t.tm_sec);
     }

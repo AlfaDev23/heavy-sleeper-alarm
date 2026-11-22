@@ -13,6 +13,7 @@ NetConfig netcfg;
 /* Valores validos para as opcoes de ciclo (mesma ordem da tela). */
 static const int CHAL_OPTS[CHAL_TIME_COUNT] = CHAL_TIME_OPTS;
 static const int RAMP_OPTS[RAMP_MIN_COUNT]  = RAMP_MIN_OPTS;
+static const int RING_OPTS[RING_MAX_COUNT]  = RING_MAX_OPTS;
 
 static bool inList(int v, const int* list, int n) {
   for (int i = 0; i < n; i++) if (list[i] == v) return true;
@@ -20,10 +21,16 @@ static bool inList(int v, const int* list, int n) {
 }
 
 /* Aplica os valores padrao de fabrica na struct em memoria. */
+/* Lista de fabrica: um alarme 07:00 todos os dias (como a v0.4). */
+static void defaultAlarms() {
+  memset(settings.alarms, 0, sizeof(settings.alarms));
+  settings.alarmCount = 1;
+  settings.alarms[0]  = { 7, 0, DAYS_ALL, 1 };
+}
+
 void storageResetDefaults() {
-  settings.almHour      = 7;
-  settings.almMin       = 0;
-  settings.almEnabled   = true;
+  defaultAlarms();
+  settings.ringMaxMin   = RING_MAX_DEFAULT;
   settings.diffLevel    = DIFF_EASY;
   settings.chalMask     = 1 << CHAL_MATH;
   settings.lightPct     = 100;
@@ -44,18 +51,48 @@ bool demoFastTimes() { return DEMO_FAST_TIMES && settings.demoMode; }
 
 /* Alarme da apresentacao: so na RAM, nunca vai para a NVS. */
 static void applyDemoAlarm() {
-  settings.almHour    = DEMO_ALM_H;
-  settings.almMin     = DEMO_ALM_M;
-  settings.almEnabled = true;
+  memset(settings.alarms, 0, sizeof(settings.alarms));
+  settings.alarmCount = 1;
+  settings.alarms[0]  = { DEMO_ALM_H, DEMO_ALM_M, DAYS_ALL, 1 };
 }
 
-/* Rele da NVS o alarme de verdade (ao sair do demo). */
-static void loadAlarm() {
-  settings.almHour    = prefs.getInt ("alm_hour",    7);
-  settings.almMin     = prefs.getInt ("alm_min",     0);
-  settings.almEnabled = prefs.getBool("alm_enabled", true);
-  if (settings.almHour < 0 || settings.almHour > 23) settings.almHour = 7;
-  if (settings.almMin  < 0 || settings.almMin  > 59) settings.almMin  = 0;
+/* Le a lista de alarmes da NVS (no boot e ao sair do demo). */
+static void loadAlarms() {
+  if (prefs.isKey("alarm_n")) {
+    int   n = prefs.getInt("alarm_n", 0);
+    Alarm tmp[MAX_ALARMS];
+    memset(tmp, 0, sizeof(tmp));
+    bool ok = n >= 0 && n <= MAX_ALARMS &&
+              (n == 0 || prefs.getBytesLength("alarms") == sizeof(Alarm) * n);
+    if (ok && n > 0) prefs.getBytes("alarms", tmp, sizeof(Alarm) * n);
+    for (int i = 0; ok && i < n; i++) if (!alarmValid(tmp[i])) ok = false;
+    if (ok) {
+      settings.alarmCount = n;
+      memcpy(settings.alarms, tmp, sizeof(tmp));
+      return;
+    }
+    Serial.println(F("[STORAGE] lista de alarmes corrompida -> padrao"));
+  } else if (prefs.isKey("alm_hour")) {
+    // v0.5: o alarme unico das versoes antigas (chaves alm_*) vira o
+    // primeiro da lista, tocando todos os dias como antes.
+    memset(settings.alarms, 0, sizeof(settings.alarms));
+    settings.alarmCount = 1;
+    settings.alarms[0].hour    = constrain(prefs.getInt("alm_hour", 7), 0, 23);
+    settings.alarms[0].minute  = constrain(prefs.getInt("alm_min", 0), 0, 59);
+    settings.alarms[0].days    = DAYS_ALL;
+    settings.alarms[0].enabled = prefs.getBool("alm_enabled", true) ? 1 : 0;
+    return;
+  }
+  defaultAlarms();
+}
+
+/* Grava a lista de alarmes (fora do demo). */
+static void saveAlarms() {
+  prefs.putInt("alarm_n", settings.alarmCount);
+  if (settings.alarmCount > 0)
+    prefs.putBytes("alarms", settings.alarms, sizeof(Alarm) * settings.alarmCount);
+  else
+    prefs.remove("alarms");
 }
 
 /* Rede: vazia, lampada em modo automatico e fuso de Brasilia. */
@@ -67,8 +104,7 @@ static void netDefaults() {
 /* Garante que valores lidos da NVS estejam dentro da faixa valida. */
 static void sanitize() {
   bool bad = false;
-  if (settings.almHour   < 0 || settings.almHour   > 23) bad = true;
-  if (settings.almMin    < 0 || settings.almMin    > 59) bad = true;
+  if (!inList(settings.ringMaxMin, RING_OPTS, RING_MAX_COUNT)) bad = true;
   if (settings.diffLevel < 0 || settings.diffLevel > 3)  bad = true;
   if (settings.chalMask  < 1 || settings.chalMask  > CHAL_MASK_ALL) bad = true;
   if (settings.lightPct  < WIZ_DIM_MIN || settings.lightPct > 100) bad = true;
@@ -84,7 +120,12 @@ static void sanitize() {
 
   if (bad) {
     Serial.println(F("[STORAGE] Preferences corrompida -> restaurando padroes"));
+    Alarm keep[MAX_ALARMS];                     // a lista tem validacao propria
+    int   keepN = settings.alarmCount;
+    memcpy(keep, settings.alarms, sizeof(keep));
     storageResetDefaults();
+    settings.alarmCount = keepN;
+    memcpy(settings.alarms, keep, sizeof(keep));
     storageSave();
   }
 }
@@ -99,9 +140,8 @@ void storageBegin() {
     return;
   }
 
-  settings.almHour      = prefs.getInt ("alm_hour",      settings.almHour);
-  settings.almMin       = prefs.getInt ("alm_min",       settings.almMin);
-  settings.almEnabled   = prefs.getBool("alm_enabled",   settings.almEnabled);
+  loadAlarms();
+  settings.ringMaxMin   = prefs.getInt ("ring_max",      settings.ringMaxMin);
   settings.diffLevel    = prefs.getInt ("diff_level",    settings.diffLevel);
   // v0.4.1: varios tipos de desafio (chave nova chal_mask). Quem vem da
   // chave antiga diff_type (um tipo so, 0-3) vira a mascara desse tipo.
@@ -145,9 +185,9 @@ void storageBegin() {
   // Em modo demo o alarme e forcado para o horario da apresentacao.
   if (settings.demoMode) applyDemoAlarm();
 
-  Serial.printf("[STORAGE] alarme=%02d:%02d en=%d nivel=%d tipos=0x%X luz=%d%% vib=%d "
+  Serial.printf("[STORAGE] alarmes=%d max=%dmin nivel=%d tipos=0x%X luz=%d%% vib=%d "
                 "rampa=%dmin desafio=%ds noite=%d modo=%s wifi='%s' wiz='%s'\n",
-                settings.almHour, settings.almMin, settings.almEnabled,
+                settings.alarmCount, settings.ringMaxMin,
                 settings.diffLevel, settings.chalMask,
                 settings.lightPct, settings.vibMode,
                 settings.rampMin, settings.chalTimeS, settings.nightMode,
@@ -156,11 +196,8 @@ void storageBegin() {
 
 /* Grava a struct inteira de volta na NVS. */
 void storageSave() {
-  if (!settings.demoMode) {       // no demo o alarme em RAM e o da apresentacao
-    prefs.putInt ("alm_hour",     settings.almHour);
-    prefs.putInt ("alm_min",      settings.almMin);
-    prefs.putBool("alm_enabled",  settings.almEnabled);
-  }
+  if (!settings.demoMode) saveAlarms();   // no demo a lista e a da apresentacao
+  prefs.putInt ("ring_max",       settings.ringMaxMin);
   prefs.putInt ("diff_level",     settings.diffLevel);
   prefs.putInt ("chal_mask",      settings.chalMask);
   prefs.putInt ("light_pct",      settings.lightPct);
@@ -183,17 +220,16 @@ void storageSave() {
 void storageSetDemo(bool on) {
   if (on == settings.demoMode) return;
   if (on) {
-    storageSave();                // garante o alarme de verdade na NVS antes
+    storageSave();                // garante a lista de verdade na NVS antes
     settings.demoMode = true;
     applyDemoAlarm();
   } else {
     settings.demoMode = false;
-    loadAlarm();
+    loadAlarms();
   }
   prefs.putBool("demo_mode", settings.demoMode);
-  Serial.printf("[STORAGE] modo %s (alarme %02d:%02d en=%d)\n",
-                on ? "DEMO" : "PRODUCAO", settings.almHour, settings.almMin,
-                settings.almEnabled);
+  Serial.printf("[STORAGE] modo %s (%d alarme(s))\n",
+                on ? "DEMO" : "PRODUCAO", settings.alarmCount);
 }
 
 /* Grava SSID, senha, IP da lampada e fuso. */

@@ -5,12 +5,13 @@
 #define STORAGE_H
 
 #include "config.h"
+#include "alarms.h"
 
 /* Todas as configuracoes do usuario que sobrevivem a um reboot. */
 struct Settings {
-  int  almHour;      // 0-23
-  int  almMin;       // 0-59
-  bool almEnabled;   // alarme armado?
+  int   alarmCount;            // alarmes na lista (0..MAX_ALARMS)
+  Alarm alarms[MAX_ALARMS];    // hora, minuto, dias da semana, ligado
+  int   ringMaxMin;            // tempo maximo tocando (min); 0 = sem limite
   int  diffLevel;    // DiffLevel 0-3
   int  chalMask;     // tipos de desafio marcados: bit ChalType (1-15)
   int  lightPct;     // brilho maximo da lampada WiZ, 10-100
@@ -45,9 +46,9 @@ void storageSave();                           // grava as configuracoes atuais
 void storageSaveNet();                        // grava a NetConfig
 void storageResetDefaults();                  // volta aos padroes de fabrica
 
-/* Modo demo. Com ele ligado o alarme em RAM e o da apresentacao (07:30) e
-   storageSave() NAO grava as chaves do alarme, para o alarme de verdade
-   sobreviver ao demo. */
+/* Modo demo. Com ele ligado a lista em RAM e so o alarme da apresentacao
+   (07:30) e storageSave() NAO grava a lista, para os alarmes de verdade
+   sobreviverem ao demo. */
 void storageSetDemo(bool on);                 // grava o modo e ajusta o alarme
 bool storageLoadTouchCal(uint16_t cal[5]);    // true se havia calibracao salva
 void storageSaveTouchCal(const uint16_t cal[5]);

@@ -12,6 +12,9 @@
     - audio do alarme pelo DAC IO26 + amplificador do board (IO4)
     - envio dos comandos de vibracao ao Actuator ESP32 (UART2)
 
+  ALARMES (v0.5): ate MAX_ALARMS, cada um com dias da semana (alarms.h).
+  Tocando por mais de ringMaxMin minutos sem ninguem desligar, para sozinho.
+
   CICLO DO ALARME (v0.4):
     rampa ......... rampMin minutos antes: lampada sobe de 10% / 2200 K
                     ate o brilho maximo / 6500 K
@@ -68,6 +71,8 @@ static unsigned long lastStatusMs  = 0;
 static unsigned long resolveAtMs   = 0;     // fim da tela CORRETO!/ERROU
 static unsigned long vibTestUntil  = 0;     // fim do "Testar" da vibracao
 static int           lastChalType  = -1;    // ultimo tipo sorteado
+static int           firedMin      = -1;    // minuto do dia em que disparou
+static char          missedTxt[40] = "";    // "Alarme das 07:00 nao atendido"
 
 /* Segurar DESLIGAR. O touch resistivo as vezes perde uma leitura com o dedo
    parado; uma falha curta (< HOLD_GRACE_MS) nao zera a contagem. */
@@ -88,6 +93,7 @@ static unsigned long peekUntil     = 0;     // 0 = sem "espiada" no modo noturno
 bool appAlarmBusy()       { return alState != AL_IDLE; }
 void appSettingsChanged() { settingsDirty = true; }
 bool appSunriseActive()   { return sunriseOn; }
+const char* appMissedAlarm() { return missedTxt; }
 
 /* Teste de intensidade pedido pelo portal. O loop desliga em VIB_TEST_MS. */
 bool appVibTest(int percent) {
@@ -217,11 +223,12 @@ static void updateSunrise() {
 
   bool  want = false;
   float p    = 0;
-  if (settings.almEnabled && !snoozeUntil) {
-    long almS = settings.almHour * 3600L + settings.almMin * 60L;
-    long left = (almS - rtc.secondsOfDay() + 86400L) % 86400L;
+  if (!snoozeUntil) {
+    long left = 0;
+    int  idx  = alarmNext(settings.alarms, settings.alarmCount, rtc.weekday,
+                          rtc.secondsOfDay(), &left);
     long rs   = rampSeconds();
-    if (left > 0 && left <= rs) {
+    if (idx >= 0 && left > 0 && left <= rs) {
       want = true;
       p    = 1.0f - (float)left / (float)rs;
     }
@@ -271,6 +278,8 @@ static void startAlarm() {
   holding      = false;
   sunriseOn    = false;
   peekUntil    = 0;
+  missedTxt[0] = '\0';
+  firedMin     = rtc.minuteOfDay();
 
   // Zera o contador de sonecas quando vira o dia.
   if (settings.lastAlarmDay != rtc.dayIndex) {
@@ -327,6 +336,35 @@ static void stopAlarm() {
   snoozeUntil = 0;
   switchScreen(SCREEN_CLOCK);
   Serial.println(F("[ALARM] encerrado pelo desafio"));
+}
+
+/* Tempo maximo tocando (0 = sem limite). No demo rapido, 2 min. */
+static unsigned long ringMaxMs() {
+  if (settings.ringMaxMin <= 0) return 0;
+  return demoFastTimes() ? RING_MAX_DEMO_MS : settings.ringMaxMin * 60000UL;
+}
+
+/* Tocou o tempo maximo e ninguem desligou: desiste, como no celular.
+   Apaga som, vibracao e luz e deixa o aviso na tela do relogio. */
+static void timeoutAlarm() {
+  unsigned long rang = ringElapsed();
+  alState     = AL_IDLE;
+  holding     = false;
+  stopSound();
+  lightOff();
+  commSendAlarm("TIMEOUT");
+  tempBonus   = 0;
+  stageBonus  = 0;
+  snoozeBonus = 0;
+  snoozeUntil = 0;
+  if (firedMin >= 0)
+    snprintf(missedTxt, sizeof(missedTxt), "Alarme das %02d:%02d nao atendido",
+             firedMin / 60, firedMin % 60);
+  else
+    snprintf(missedTxt, sizeof(missedTxt), "Alarme nao atendido");
+  switchScreen(SCREEN_CLOCK);
+  Serial.printf("[ALARM] %lu s tocando sem ninguem desligar: parou sozinho\n",
+                rang / 1000UL);
 }
 
 /* Soneca: apaga tudo, endurece o proximo desafio e reagenda. */
@@ -432,12 +470,9 @@ static int cycleNext(int cur, const int* opts, int n) {
 static void handleAlarmConfig(int a) {
   static const int RAMP[RAMP_MIN_COUNT]  = RAMP_MIN_OPTS;
   static const int CHAL[CHAL_TIME_COUNT] = CHAL_TIME_OPTS;
+  static const int RMAX[RING_MAX_COUNT]  = RING_MAX_OPTS;
   switch (a) {
-    case ACT_ALM_H_UP: settings.almHour = (settings.almHour + 1) % 24;      break;
-    case ACT_ALM_H_DN: settings.almHour = (settings.almHour + 23) % 24;     break;
-    case ACT_ALM_M_UP: settings.almMin  = (settings.almMin + 1) % 60;       break;
-    case ACT_ALM_M_DN: settings.almMin  = (settings.almMin + 59) % 60;      break;
-    case ACT_ALM_TOGGLE: settings.almEnabled = !settings.almEnabled;        break;
+    case ACT_RINGMAX_CYCLE: settings.ringMaxMin = cycleNext(settings.ringMaxMin, RMAX, RING_MAX_COUNT); break;
     case ACT_LIGHT_UP: settings.lightPct = min(100, settings.lightPct + 10); break;
     case ACT_LIGHT_DN: settings.lightPct = max(WIZ_DIM_MIN, settings.lightPct - 10); break;
     case ACT_VIB_CYCLE: settings.vibMode = (settings.vibMode + 1) % 4;      break;
@@ -454,6 +489,80 @@ static void handleAlarmConfig(int a) {
         }
         settings.chalMask ^= bit;
       }
+      break;
+  }
+  scheduleRedraw();
+}
+
+/* Lista de alarmes: editar, ligar/desligar, novo e opcoes. */
+static void handleAlarmList(int a) {
+  if (a >= ACT_ALM_EDIT_0 && a < ACT_ALM_EDIT_0 + MAX_ALARMS) {
+    int i = a - ACT_ALM_EDIT_0;
+    if (i >= settings.alarmCount) return;
+    alarmDraft    = settings.alarms[i];
+    alarmDraftIdx = i;
+    switchScreen(SCREEN_ALARM_EDIT);
+    return;
+  }
+  if (a >= ACT_ALM_EN_0 && a < ACT_ALM_EN_0 + MAX_ALARMS) {
+    int i = a - ACT_ALM_EN_0;
+    if (i >= settings.alarmCount) return;
+    settings.alarms[i].enabled = !settings.alarms[i].enabled;
+    storageSave();
+    scheduleRedraw();
+    return;
+  }
+  if (a == ACT_ALM_NEW) {
+    if (settings.alarmCount >= MAX_ALARMS) {
+      uiToast("Limite de 6 alarmes", C_WARN);
+      return;
+    }
+    alarmDraft    = { 7, 0, DAYS_WEEK, 1 };
+    alarmDraftIdx = -1;
+    switchScreen(SCREEN_ALARM_EDIT);
+  }
+}
+
+/* Edicao de um alarme (rascunho): hora, minuto, dias, ativo. */
+static void handleAlarmEdit(int a) {
+  Alarm& d = alarmDraft;
+  switch (a) {
+    case ACT_ALM_H_UP: d.hour   = (d.hour + 1) % 24;    break;
+    case ACT_ALM_H_DN: d.hour   = (d.hour + 23) % 24;   break;
+    case ACT_ALM_M_UP: d.minute = (d.minute + 1) % 60;  break;
+    case ACT_ALM_M_DN: d.minute = (d.minute + 59) % 60; break;
+    case ACT_ALM_TOGGLE:      d.enabled = !d.enabled;  break;
+    case ACT_ALM_PRESET_WEEK: d.days = DAYS_WEEK;      break;
+    case ACT_ALM_PRESET_ALL:  d.days = DAYS_ALL;       break;
+    case ACT_ALM_PRESET_ONCE: d.days = DAYS_ONCE;      break;
+
+    case ACT_ALM_SAVE_EDIT:
+      if (alarmDraftIdx < 0) {
+        if (settings.alarmCount >= MAX_ALARMS) { uiToast("Limite de 6 alarmes", C_WARN); return; }
+        alarmDraftIdx = settings.alarmCount++;
+      }
+      settings.alarms[alarmDraftIdx] = d;
+      storageSave();
+      switchScreen(SCREEN_ALARM_LIST);
+      uiToast(settings.demoMode ? "No demo os alarmes nao gravam" : "Alarme salvo",
+              settings.demoMode ? C_WARN : C_OK);
+      return;
+
+    case ACT_ALM_DELETE:
+      if (alarmDraftIdx >= 0 && alarmDraftIdx < settings.alarmCount) {
+        for (int i = alarmDraftIdx; i < settings.alarmCount - 1; i++)
+          settings.alarms[i] = settings.alarms[i + 1];
+        settings.alarmCount--;
+        storageSave();
+        switchScreen(SCREEN_ALARM_LIST);
+        uiToast("Alarme excluido", C_WARN);
+      } else {
+        switchScreen(SCREEN_ALARM_LIST);      // alarme novo: so descarta
+      }
+      return;
+
+    default:
+      if (a >= ACT_ALM_DAY_0 && a <= ACT_ALM_DAY_0 + 6) d.days ^= 1 << (a - ACT_ALM_DAY_0);
       break;
   }
   scheduleRedraw();
@@ -511,12 +620,20 @@ static void handleSetTime(int a) {
     case ACT_T_M_DN: rtc.setTime(rtc.hour, (rtc.minute + 59) % 60, rtc.second); break;
     case ACT_T_S_UP: rtc.setTime(rtc.hour, rtc.minute, (rtc.second + 1) % 60);  break;
     case ACT_T_S_DN: rtc.setTime(rtc.hour, rtc.minute, (rtc.second + 59) % 60); break;
+    case ACT_T_WD_UP: rtc.setWeekday(rtc.weekday + 1); break;
+    case ACT_T_WD_DN: rtc.setWeekday(rtc.weekday + 6); break;
   }
   scheduleRedraw();
 }
 
 /* Roteia um toque curto conforme a tela ativa. */
 static void handleTap(int x, int y) {
+  // Qualquer toque apaga o aviso de alarme nao atendido.
+  if (missedTxt[0]) {
+    missedTxt[0] = '\0';
+    if (curScreen == SCREEN_CLOCK) { switchScreen(SCREEN_CLOCK); return; }
+  }
+
   int a = uiHitTest(x, y);
   if (a == ACT_NONE) return;
   uiFlashAction(a);
@@ -533,9 +650,11 @@ static void handleTap(int x, int y) {
       switchScreen(SCREEN_CLOCK);
       return;
 
-    case ACT_OPEN_ALARM_CFG: switchScreen(SCREEN_ALARM_CONFIG); return;
+    case ACT_OPEN_ALARM_CFG: switchScreen(SCREEN_ALARM_LIST);   return;
     case ACT_OPEN_SET_TIME:  switchScreen(SCREEN_SET_TIME);     return;
-    case ACT_GO_ALARM_CFG:   switchScreen(SCREEN_ALARM_CONFIG); return;
+    case ACT_GO_ALARM_CFG:   switchScreen(SCREEN_ALARM_LIST);   return;
+    case ACT_GO_ALARM_LIST:  switchScreen(SCREEN_ALARM_LIST);   return;
+    case ACT_GO_ALARM_OPTS:  switchScreen(SCREEN_ALARM_CONFIG); return;
     case ACT_GO_NIGHT_CFG:   switchScreen(SCREEN_NIGHT_CONFIG); return;
     case ACT_GO_NETWORK:     switchScreen(SCREEN_NETWORK);      return;
     case ACT_GO_SET_TIME:    switchScreen(SCREEN_SET_TIME);     return;
@@ -579,6 +698,8 @@ static void handleTap(int x, int y) {
   }
 
   if      (curScreen == SCREEN_ALARM_CONFIG) handleAlarmConfig(a);
+  else if (curScreen == SCREEN_ALARM_LIST)   handleAlarmList(a);
+  else if (curScreen == SCREEN_ALARM_EDIT)   handleAlarmEdit(a);
   else if (curScreen == SCREEN_NIGHT_CONFIG) handleNightConfig(a);
   else if (curScreen == SCREEN_NETWORK)      handleNetwork(a);
   else if (curScreen == SCREEN_SET_TIME)     handleSetTime(a);
@@ -587,6 +708,7 @@ static void handleTap(int x, int y) {
 /* Telas de ajuste esquecidas abertas voltam ao relogio (e ao modo noturno). */
 static void checkIdleReturn() {
   bool cfg = curScreen == SCREEN_SETTINGS || curScreen == SCREEN_ALARM_CONFIG ||
+             curScreen == SCREEN_ALARM_LIST || curScreen == SCREEN_ALARM_EDIT ||
              curScreen == SCREEN_NIGHT_CONFIG || curScreen == SCREEN_NETWORK ||
              curScreen == SCREEN_SET_TIME;
   if (cfg && millis() - lastTouchMs >= CONFIG_IDLE_MS) {
@@ -682,12 +804,22 @@ void loop() {
   if (rtc.tick()) {
     if (curScreen == SCREEN_CLOCK) uiClockTick();
 
+    // Algum alarme da lista bate com o minuto e o dia da semana?
     int key = rtc.dayIndex * 1440 + rtc.hour * 60 + rtc.minute;
-    if (alState == AL_IDLE && settings.almEnabled &&
-        rtc.isAlarmTime(settings.almHour, settings.almMin) &&
-        key != lastFiredKey) {
-      lastFiredKey = key;
-      startAlarm();
+    if (alState == AL_IDLE && key != lastFiredKey) {
+      for (int i = 0; i < settings.alarmCount; i++) {
+        if (!alarmDueNow(settings.alarms[i], rtc.weekday, rtc.hour, rtc.minute)) continue;
+        lastFiredKey = key;
+        if (settings.alarms[i].days == DAYS_ONCE) {   // "uma vez": se desativa
+          settings.alarms[i].enabled = 0;
+          storageSave();
+        }
+        Serial.printf("[ALARM] alarme %d (%02d:%02d %s)\n", i + 1,
+                      settings.alarms[i].hour, settings.alarms[i].minute,
+                      alarmDaysText(settings.alarms[i].days));
+        startAlarm();
+        break;
+      }
     }
 
     updateSunrise();
@@ -705,6 +837,9 @@ void loop() {
   /* Alarme tocando. */
   if (alState == AL_RINGING) {
     updateEscalation();
+    if (ringMaxMs() && ringElapsed() >= ringMaxMs()) timeoutAlarm();
+  }
+  if (alState == AL_RINGING) {
     updateDismissHold();
 
     if (millis() - lastFlashMs >= 500) {      // piscar do cabecalho
