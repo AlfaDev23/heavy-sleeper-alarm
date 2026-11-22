@@ -19,6 +19,7 @@
 #include "clock.h"
 #include "night.h"
 #include "app.h"
+#include "comm.h"
 
 static WebServer server(80);
 static DNSServer dns;
@@ -109,6 +110,7 @@ static void handleState() {
   o += ",\"time\":"; jsonStr(o, buf);
   o += ",\"ntp\":"; o += rtc.synced ? "true" : "false";
   o += ",\"sunrise\":"; o += appSunriseActive() ? "true" : "false";
+  o += ",\"demo\":"; o += settings.demoMode ? "true" : "false";
 
   o += ",\"net\":{\"state\":"; jsonStr(o, netStateName());
   o += ",\"ssid\":"; jsonStr(o, netcfg.ssid);
@@ -136,11 +138,14 @@ static void handleState() {
            ",\"alarm\":{\"h\":%d,\"m\":%d,\"en\":%s,", settings.almHour,
            settings.almMin, settings.almEnabled ? "true" : "false");
   o += buf;
-  snprintf(buf, sizeof(buf), "\"diff\":%d,\"type\":%d,\"chal\":%d,",
-           settings.diffLevel, settings.diffType, settings.chalTimeS);
+  snprintf(buf, sizeof(buf), "\"diff\":%d,\"mask\":%d,\"chal\":%d,",
+           settings.diffLevel, settings.chalMask, settings.chalTimeS);
   o += buf;
   snprintf(buf, sizeof(buf), "\"ramp\":%d,\"light\":%d,\"vib\":%d,",
            settings.rampMin, settings.lightPct, settings.vibMode);
+  o += buf;
+  snprintf(buf, sizeof(buf), "\"vibD\":[%d,%d,%d],", settings.vibDuty[0],
+           settings.vibDuty[1], settings.vibDuty[2]);
   o += buf;
   o += "\"busy\":"; o += appAlarmBusy() ? "true" : "false";
   o += '}';
@@ -173,8 +178,16 @@ static void handleSave() {
   }
   if (server.hasArg("almEn")) s.almEnabled = server.arg("almEn") == "1";
   if (argInt("diff",  0, 3, v))   s.diffLevel = v;
-  if (argInt("type",  0, 3, v))   s.diffType  = v;
-  if (argInt("vib",   0, 2, v))   s.vibMode   = v;
+  if (server.hasArg("chalMask")) {
+    if (!argInt("chalMask", 1, CHAL_MASK_ALL, v)) {
+      sendError(400, "Marque pelo menos 1 tipo de desafio"); return;
+    }
+    s.chalMask = v;
+  }
+  if (argInt("vib",   0, 3, v))   s.vibMode   = v;
+  if (argInt("vibW",  0, 100, v)) s.vibDuty[0] = v;
+  if (argInt("vibM",  0, 100, v)) s.vibDuty[1] = v;
+  if (argInt("vibX",  0, 100, v)) s.vibDuty[2] = v;
   if (argInt("light", WIZ_DIM_MIN, 100, v)) s.lightPct = v;
   if (argInt("chal",  30, 120, v) && v % 30 == 0) s.chalTimeS = v;
   if (argInt("ramp",  5, 20, v)   && v % 5 == 0)  s.rampMin   = v;
@@ -218,6 +231,28 @@ static void handleSave() {
   storageSave();
   if (netChanged) storageSaveNet();
   appSettingsChanged();
+  sendOk();
+}
+
+/* Demo <-> producao (demo=1 / demo=0). Fica fora do /api/save para o
+   formulario do alarme nao gravar o horario do demo por engano. */
+static void handleMode() {
+  if (!server.hasArg("demo")) { sendError(400, "Falta o parametro demo"); return; }
+  bool on = server.arg("demo") == "1";
+  if (!appSetDemo(on)) {
+    sendError(409, "Alarme tocando: resolva o desafio primeiro");
+    return;
+  }
+  sendOk();
+}
+
+/* Vibra 2 s na intensidade do controle deslizante (duty=0-100), sem salvar:
+   da para achar o ponto certo de cada nivel testando no motor. */
+static void handleVibTest() {
+  int v;
+  if (!argInt("duty", 0, 100, v)) { sendError(400, "duty deve ser 0-100"); return; }
+  if (!commActuatorOnline())      { sendError(409, "Atuador offline"); return; }
+  if (!appVibTest(v))             { sendError(409, "Alarme tocando"); return; }
   sendOk();
 }
 
@@ -313,6 +348,8 @@ void portalBegin() {
   server.on("/",                  HTTP_GET,  handleRoot);
   server.on("/api/state",         HTTP_GET,  handleState);
   server.on("/api/save",          HTTP_POST, handleSave);
+  server.on("/api/mode",          HTTP_POST, handleMode);
+  server.on("/api/vib/test",      HTTP_POST, handleVibTest);
   server.on("/api/scan",          HTTP_GET,  handleScan);
   server.on("/api/wifi",          HTTP_POST, handleWifi);
   server.on("/api/wifi/forget",   HTTP_POST, handleForget);

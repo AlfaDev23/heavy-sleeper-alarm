@@ -16,4 +16,12 @@ void appSettingsChanged();
 /* True se a rampa de nascer do sol esta acendendo a lampada agora. */
 bool appSunriseActive();
 
+/* Troca entre demo e producao sem recompilar (tela AJUSTES ou portal).
+   Recusa (false) com o alarme tocando ou no desafio. */
+bool appSetDemo(bool on);
+
+/* Botao "Testar" do portal: vibra VIB_TEST_MS na intensidade dada (%).
+   Recusa (false) com o alarme tocando ou no desafio. */
+bool appVibTest(int percent);
+
 #endif /* APP_H */

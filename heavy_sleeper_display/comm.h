@@ -11,6 +11,7 @@ void commPoll();                  // le respostas e atualiza o LED (chame no loo
 
 void commSendLight(int percent);  // LIGHT:0-100
 void commSendVib(const char* mode); // VIB:ON | VIB:OFF | VIB:PULSE
+void commSendVibDuty(int percent);  // VIB:DUTY:0-100 (intensidade)
 void commRequestStatus();         // STATUS?
 void commSendAlarm(const char* what); // ALARM:START | STOP | ESCALATED
 

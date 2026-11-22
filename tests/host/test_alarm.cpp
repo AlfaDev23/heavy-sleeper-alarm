@@ -18,7 +18,7 @@
 extern bool g_tapPending; extern int g_action;
 static void tap(int a){ g_action=a; g_tapPending=true; }
 extern unsigned long g_ms; extern Screen g_screen; extern bool g_night,g_wizOn,g_down; extern int g_dim,g_temp,g_audio,g_tx,g_ty,g_rightSeen,g_wrongSeen,g_timeoutSeen; extern const char* g_vib;
-void setup(); void loop(); bool appAlarmBusy();
+void setup(); void loop(); bool appAlarmBusy(); bool appSetDemo(bool);
 static int fails=0;
 #define CHECK(c,msg) do{ if(c) printf("  ok   %s\n",msg); else {printf("  FAIL %s\n",msg); fails++;} }while(0)
 static void run(unsigned long ms){ unsigned long end=g_ms+ms; while(g_ms<end){ g_ms+=5; loop(); } }
@@ -32,7 +32,7 @@ static void wrong(){ const Challenge&c=challengeCurrent(); int guard=0; while(c.
 int main(){
   setup();
   settings.almHour=7; settings.almMin=0; settings.almEnabled=true; settings.rampMin=10; settings.lightPct=80;
-  settings.chalTimeS=60; settings.diffType=TEST_CHAL_TYPE; settings.vibMode=VIB_MODE_STRONG; settings.nightMode=NIGHT_AUTO;
+  settings.chalTimeS=60; settings.chalMask=1<<TEST_CHAL_TYPE; settings.vibMode=VIB_MODE_MAX; settings.nightMode=NIGHT_AUTO;
   rtc.setTime(6,49,0); rtc.lastTickMs=g_ms;
   printf("A) nascer do sol\n");
   run(30000); CHECK(!g_wizOn,"06:49:30 lampada ainda apagada");
@@ -57,7 +57,7 @@ int main(){
   hold(true); run(2100); hold(false); run(100);
   CHECK(challengeCurrent().level==lvl0+1,"desafio subiu 1 nivel");
   printf("D) tempo esgotado\n");
-  int w0=g_wrongSeen; run(60500); CHECK(g_timeoutSeen==1 || (settings.diffType==CHAL_REACTION && g_wrongSeen>w0),"tela TEMPO ESGOTADO (ou ERROU pela janela da Reacao)");
+  int w0=g_wrongSeen; run(60500); CHECK(g_timeoutSeen==1 || (TEST_CHAL_TYPE==CHAL_REACTION && g_wrongSeen>w0),"tela TEMPO ESGOTADO (ou ERROU pela janela da Reacao)");
   run(2000); CHECK(g_screen==SCREEN_ALARM_RINGING,"tempo acabou: toca de novo");
   printf("E) escalada so conta tempo tocando\n");
   // tempo tocando ate aqui ~ 3.6 s + ... ; o desafio durou >60 s e nao pode ter subido o estagio
@@ -91,6 +91,29 @@ int main(){
   printf("J) tela de ajuste esquecida volta ao relogio\n");
   tap(ACT_GO_NIGHT_CFG); run(100); CHECK(g_screen==SCREEN_NIGHT_CONFIG,"abriu ajustes");
   run(61000); CHECK(g_screen==SCREEN_CLOCK,"1 min sem toque: relogio");
+  printf("K) demo <-> producao sem recompilar\n");
+  CHECK(!settings.demoMode,"comeca em producao");
+  settings.nightMode=NIGHT_FORCE_DAY; settings.almHour=6; settings.almMin=15; settings.almEnabled=true; storageSave();
+  CHECK(appSetDemo(true) && settings.demoMode,"liga o demo");
+  CHECK(rtc.hour==7 && rtc.minute==29 && settings.almHour==7 && settings.almMin==30,"demo: relogio 07:29, alarme 07:30");
+  storageSave();   // salvar no demo nao pode sobrescrever o alarme de verdade
+  run(20000); CHECK(g_wizOn,"07:29:20 rampa curta do demo acendeu");
+  run(41000); CHECK(g_screen==SCREEN_ALARM_RINGING,"07:30 tocou");
+  CHECK(!appSetDemo(false) && settings.demoMode,"tocando: troca de modo recusada");
+  run(21000); CHECK(g_audio==2,"20 s tocando -> estagio 2 (tempos curtos)");
+  hold(true); run(2100); hold(false); solve(); run(2000);
+  CHECK(!appAlarmBusy(),"desafio resolvido");
+  CHECK(appSetDemo(false) && !settings.demoMode,"volta para producao");
+  CHECK(settings.almHour==6 && settings.almMin==15 && settings.almEnabled,"alarme de verdade (06:15) voltou");
+  CHECK(rtc.hour==0 && !rtc.synced,"relogio zerado esperando o NTP");
+  rtc.setTime(6,14,50); run(11000); CHECK(g_screen==SCREEN_ALARM_RINGING,"06:15 tocou em producao");
+  run(21000); CHECK(g_audio==1,"producao: 20 s tocando ainda estagio 1");
+  printf("L) varios tipos marcados: sorteia sem repetir\n");
+  { int seen=0, prev=-1, rep=0;
+    for(int i=0;i<200;i++){ int t=challengePickType(0x0B, prev); seen|=1<<t; if(t==prev) rep++; prev=t; }
+    CHECK(seen==0x0B,"sorteou MAT, MEM e REA (e nunca SEQ)");
+    CHECK(rep==0,"nunca repetiu o tipo anterior");
+    CHECK(challengePickType(1<<CHAL_SEQUENCE, CHAL_SEQUENCE)==CHAL_SEQUENCE,"um tipo so: sempre ele"); }
   printf("\n%s (%d falhas)\n", fails?"FALHOU":"TUDO OK", fails);
   return fails;
   return 0;

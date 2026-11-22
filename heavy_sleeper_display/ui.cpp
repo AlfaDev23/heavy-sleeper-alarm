@@ -249,7 +249,7 @@ static void drawActuatorLine() {
 /* Painel com o resumo da configuracao e o estado das conexoes. */
 static void drawClockInfo() {
   static char d[28];
-  snprintf(d, sizeof(d), "%s - %s", typeName(settings.diffType),
+  snprintf(d, sizeof(d), "%s - %s", typeMaskName(settings.chalMask),
            diffName(settings.diffLevel));
   infoLine(150, "DESAFIO", d, C_TEXT);
 
@@ -274,7 +274,7 @@ static void drawClockFooter() {
   drawLevelBar(46, 271, (settings.lightPct * 8) / 100, TFT_YELLOW);
 
   textAt(8, 288, "VIB",  C_SUBTEXT, C_PANEL, 1);
-  drawLevelBar(46, 287, settings.vibMode * 4, C_WARN);
+  drawLevelBar(46, 287, (settings.vibMode * 8) / 3, C_WARN);
 
   char buf[56];
   snprintf(buf, sizeof(buf), "rampa %d min", settings.rampMin);
@@ -282,6 +282,7 @@ static void drawClockFooter() {
 
   snprintf(buf, sizeof(buf), "v%s | toque longo = ajustes", FW_VERSION);
   textAt(8, 306, buf, C_LINE, C_PANEL, 1);
+  if (settings.demoMode) textAt(150, 288, "MODO DEMO", C_WARN, C_PANEL, 1);
 }
 
 /* Tela principal completa (tema normal). */
@@ -390,12 +391,17 @@ static void drawSettingsScreen() {
   tft.fillScreen(C_BG);
   drawTitleBar("AJUSTES");
 
-  addButton(20,  40, 200, 40, "CONFIG. ALARME", ACT_GO_ALARM_CFG, C_BTN, C_ACCENT);
-  addButton(20,  86, 200, 40, "MODO NOTURNO",   ACT_GO_NIGHT_CFG, C_BTN, C_ACCENT);
-  addButton(20, 132, 200, 40, "REDE E LAMPADA", ACT_GO_NETWORK,   C_BTN, C_ACCENT);
-  addButton(20, 178, 200, 40, "AJUSTAR HORA",   ACT_GO_SET_TIME,  C_BTN, C_ACCENT);
-  addButton(20, 224, 200, 40, "TESTAR ALARME",  ACT_TEST_ALARM,   C_BTN, C_WARN);
-  addButton(20, 274, 200, 40, "VOLTAR",         ACT_BACK,         C_HEADER, C_LINE);
+  addButton(20,  38, 200, 34, "CONFIG. ALARME", ACT_GO_ALARM_CFG, C_BTN, C_ACCENT);
+  addButton(20,  78, 200, 34, "MODO NOTURNO",   ACT_GO_NIGHT_CFG, C_BTN, C_ACCENT);
+  addButton(20, 118, 200, 34, "REDE E LAMPADA", ACT_GO_NETWORK,   C_BTN, C_ACCENT);
+  addButton(20, 158, 200, 34, "AJUSTAR HORA",   ACT_GO_SET_TIME,  C_BTN, C_ACCENT);
+  addButton(20, 198, 200, 34, "TESTAR ALARME",  ACT_TEST_ALARM,   C_BTN, C_WARN);
+  // Demo em laranja para nao passar despercebido; producao em verde.
+  if (settings.demoMode)
+    addButton(20, 238, 200, 34, "MODO: DEMO", ACT_DEMO_TOGGLE, 0x4A00, C_WARN, C_WARN);
+  else
+    addButton(20, 238, 200, 34, "MODO: PRODUCAO", ACT_DEMO_TOGGLE, C_BTN_SEL, C_OK);
+  addButton(20, 280, 200, 34, "VOLTAR",         ACT_BACK,         C_HEADER, C_LINE);
 }
 
 /* ──────────────────── configuracao do alarme ───────────────────── */
@@ -447,16 +453,16 @@ static void drawAlarmConfigScreen() {
   for (int i = 0; i < 4; i++)
     addChoice(6 + i * 58, 116, 54, 28, DL[i], ACT_DIFF_0 + i, settings.diffLevel == i);
 
-  textAt(6, 148, "DESAFIO", C_SUBTEXT, C_BG, 1);
+  textAt(6, 148, "DESAFIOS (marque 1 ou mais: sorteia)", C_SUBTEXT, C_BG, 1);
   static const char* TL_[4] = { "MAT", "MEM", "SEQ", "REA" };
   for (int i = 0; i < 4; i++)
-    addChoice(6 + i * 58, 160, 54, 28, TL_[i], ACT_TYPE_0 + i, settings.diffType == i);
+    addChoice(6 + i * 58, 160, 54, 28, TL_[i], ACT_TYPE_0 + i, (settings.chalMask >> i) & 1);
 
   snprintf(buf, sizeof(buf), "%d%%", settings.lightPct);
   spinRow(192, 28, "LUZ MAX", buf, ACT_LIGHT_DN, ACT_LIGHT_UP);
 
-  static const char* VIBN[3] = { "VIB: OFF", "VIB: FRACA", "VIB: FORTE" };
-  addChoice(6, 224, 112, 28, VIBN[constrain(settings.vibMode, 0, 2)],
+  static const char* VIBN[4] = { "VIB: OFF", "VIB: FRACA", "VIB: MEDIA", "VIB: MAXIMA" };
+  addChoice(6, 224, 112, 28, VIBN[constrain(settings.vibMode, 0, 3)],
             ACT_VIB_CYCLE, settings.vibMode != VIB_MODE_OFF);
 
   static char rampLbl[20];

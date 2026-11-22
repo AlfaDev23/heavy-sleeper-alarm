@@ -24,6 +24,7 @@ enum UiAction {
   ACT_GO_NETWORK,
   ACT_GO_SET_TIME,
   ACT_TEST_ALARM,
+  ACT_DEMO_TOGGLE,      // alterna demo <-> producao
   ACT_BACK,
 
   /* configuracao do alarme */

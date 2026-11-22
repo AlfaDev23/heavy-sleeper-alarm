@@ -6,7 +6,7 @@
 
 #include <Arduino.h>
 
-#define FW_VERSION "0.4.0-alpha"
+#define FW_VERSION "0.4.1-alpha"
 
 /* ── Luz por MOSFET — RESERVADA ─────────────────────────────────────
    Desde a v0.4 a luz do despertar e a lampada Wi-Fi WiZ, controlada pelo
@@ -33,7 +33,10 @@
 #define VIB_FREQ   200    // motores vibracall respondem bem entre 100-300 Hz
 #define VIB_RES    8
 
-#define VIB_DUTY_ON  204  // 80% de 255
+/* Intensidade da vibracao em % (0-100). O Display manda VIB:DUTY:<n> antes
+   de cada VIB:ON / VIB:PULSE, com o valor configurado no portal para a
+   intensidade fraca / media / maxima. Este e so o valor ate o 1o comando. */
+#define VIB_DUTY_DEFAULT 80
 
 /* ── Rampa da luz (despertar gradual) ───────────────────────────── */
 #define LIGHT_RAMP_MS      30000   // atinge o alvo em 30 s

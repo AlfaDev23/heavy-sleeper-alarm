@@ -172,8 +172,7 @@ void netUpdate() {
   /* Copia a hora do sistema (NTP) para o relogio da tela. */
   if (now - lastNtpCopyMs >= (rtc.synced ? NTP_RESYNC_MS : 1000UL)) {
     lastNtpCopyMs = now;
-    if (netTimeSynced()) {
-#ifndef DEMO_MODE
+    if (netTimeSynced() && !settings.demoMode) {   // demo: hora da apresentacao
       struct tm t;
       time_t    epoch = time(nullptr);
       localtime_r(&epoch, &t);
@@ -181,7 +180,6 @@ void netUpdate() {
       rtc.syncTo(t.tm_hour, t.tm_min, t.tm_sec);
       if (first) Serial.printf("[NET] hora pelo NTP: %02d:%02d:%02d\n",
                                t.tm_hour, t.tm_min, t.tm_sec);
-#endif
     }
   }
 }

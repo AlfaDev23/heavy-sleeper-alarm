@@ -36,6 +36,38 @@ const char* typeName(int type) {
   }
 }
 
+/* Sorteia entre os tipos marcados, evitando repetir o ultimo. */
+int challengePickType(int mask, int avoid) {
+  mask &= CHAL_MASK_ALL;
+  if (!mask) mask = 1 << CHAL_MATH;
+  int opts[CHAL_TYPE_COUNT], n = 0;
+  for (int t = 0; t < CHAL_TYPE_COUNT; t++)
+    if (mask & (1 << t)) opts[n++] = t;
+  if (n > 1 && avoid >= 0) {
+    int k = 0;
+    for (int i = 0; i < n; i++) if (opts[i] != avoid) opts[k++] = opts[i];
+    if (k > 0) n = k;
+  }
+  return opts[random(n)];
+}
+
+/* Nome dos tipos marcados, para a tela do relogio. */
+const char* typeMaskName(int mask) {
+  static const char* SHORT[CHAL_TYPE_COUNT] = { "MAT", "MEM", "SEQ", "REA" };
+  static char buf[20];
+  mask &= CHAL_MASK_ALL;
+  int n = 0, only = 0;
+  for (int t = 0; t < CHAL_TYPE_COUNT; t++) if (mask & (1 << t)) { n++; only = t; }
+  if (n <= 1) return typeName(only);
+  buf[0] = '\0';
+  for (int t = 0; t < CHAL_TYPE_COUNT; t++) {
+    if (!(mask & (1 << t))) continue;
+    if (buf[0]) strncat(buf, "+", sizeof(buf) - strlen(buf) - 1);
+    strncat(buf, SHORT[t], sizeof(buf) - strlen(buf) - 1);
+  }
+  return buf;
+}
+
 /* Inteiro aleatorio em [lo, hi]. */
 static int rnd(int lo, int hi) {
   return (int)random(lo, hi + 1);

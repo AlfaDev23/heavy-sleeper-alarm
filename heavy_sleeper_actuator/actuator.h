@@ -13,6 +13,8 @@ int  lightTarget();                 // alvo atual em %
 int  lightCurrent();                // valor aplicado agora em %
 
 void setVib(int mode);              // VIB_OFF | VIB_ON | VIB_PULSE
+void setVibDuty(int percent);       // intensidade 0-100 % (ON e PULSE)
+int  vibDuty();                     // intensidade atual em %
 int  vibMode();
 const char* vibName();              // "OFF" | "ON" | "PULSE"
 

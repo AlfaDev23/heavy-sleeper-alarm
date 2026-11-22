@@ -112,6 +112,13 @@ void commSendVib(const char* mode) {
   Serial.printf("[COMM] tx: VIB:%s\n", mode);
 }
 
+/* Intensidade (PWM em %) usada pelos proximos VIB:ON / VIB:PULSE. */
+void commSendVibDuty(int percent) {
+  percent = constrain(percent, 0, 100);
+  Serial2.printf("VIB:DUTY:%d\n", percent);
+  Serial.printf("[COMM] tx: VIB:DUTY:%d\n", percent);
+}
+
 /* Pede o estado atual do Actuator. */
 void commRequestStatus() {
   Serial2.print(F("STATUS?\n"));

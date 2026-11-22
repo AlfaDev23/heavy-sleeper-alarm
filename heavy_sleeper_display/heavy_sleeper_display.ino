@@ -66,6 +66,8 @@ static unsigned long lastFlashMs   = 0;
 static bool          flashState    = false;
 static unsigned long lastStatusMs  = 0;
 static unsigned long resolveAtMs   = 0;     // fim da tela CORRETO!/ERROU
+static unsigned long vibTestUntil  = 0;     // fim do "Testar" da vibracao
+static int           lastChalType  = -1;    // ultimo tipo sorteado
 
 /* Segurar DESLIGAR. O touch resistivo as vezes perde uma leitura com o dedo
    parado; uma falha curta (< HOLD_GRACE_MS) nao zera a contagem. */
@@ -86,6 +88,35 @@ static unsigned long peekUntil     = 0;     // 0 = sem "espiada" no modo noturno
 bool appAlarmBusy()       { return alState != AL_IDLE; }
 void appSettingsChanged() { settingsDirty = true; }
 bool appSunriseActive()   { return sunriseOn; }
+
+/* Teste de intensidade pedido pelo portal. O loop desliga em VIB_TEST_MS. */
+bool appVibTest(int percent) {
+  if (alState != AL_IDLE) return false;
+  commSendVibDuty(percent);
+  commSendVib("ON");
+  vibTestUntil = millis() + VIB_TEST_MS;
+  return true;
+}
+
+/* Demo <-> producao. Para a rampa e a soneca em andamento, troca o alarme
+   (storage) e o relogio: demo vai para 07:29:00; producao zera o relogio e
+   deixa o NTP acertar no proximo segundo (sem internet: AJUSTAR HORA). */
+bool appSetDemo(bool on) {
+  if (alState != AL_IDLE) return false;
+  if (on == settings.demoMode) return true;
+
+  snoozeUntil  = 0;
+  snoozeBonus  = 0;
+  lastFiredKey = -1;
+  if (sunriseOn) { sunriseOn = false; wizOff(); }
+
+  storageSetDemo(on);
+  if (on) rtc.begin(DEMO_START_H, DEMO_START_M, DEMO_START_S);
+  else    rtc.begin(0, 0, 0);       // synced=false: o NTP reaplica ja
+  nightActive = nightShouldBeActive();
+  settingsDirty = true;
+  return true;
+}
 
 /* ═══════════════════════════════════════════════════════════════════
    Navegacao
@@ -139,12 +170,16 @@ static void applyStimuli(int st) {
   commSendLight((STAGE_LIGHT[constrain(st, 0, 4)] * settings.lightPct) / 100);
 #endif
 
+  // Vibracao: estagio 1 = fraca pulsada; estagio 2 = media continua;
+  // estagio 3+ = maxima continua — sem passar do nivel escolhido.
+  vibTestUntil = 0;
   if (settings.vibMode == VIB_MODE_OFF) {
     commSendVib("OFF");
-  } else if (st <= 1) {
-    commSendVib("PULSE");
   } else {
-    commSendVib(settings.vibMode == VIB_MODE_STRONG ? "ON" : "PULSE");
+    int top = settings.vibMode - VIB_MODE_WEAK;          // 0 fraca .. 2 maxima
+    int lvl = (st <= 1) ? 0 : min(st - 1, top);
+    commSendVibDuty(settings.vibDuty[lvl]);
+    commSendVib((st <= 1 || top == 0) ? "PULSE" : "ON");
   }
 
   audioSetLevel(st);
@@ -169,11 +204,7 @@ static void lightOff() {
    ═══════════════════════════════════════════════════════════════════ */
 
 static long rampSeconds() {
-#ifdef DEMO_FAST_ESCALATE
-  return DEMO_RAMP_S;
-#else
-  return settings.rampMin * 60L;
-#endif
+  return demoFastTimes() ? DEMO_RAMP_S : settings.rampMin * 60L;
 }
 
 /*
@@ -263,7 +294,10 @@ static void dismissRing() {
   holding      = false;
   resolveAtMs  = 0;
   stopSound();
-  challengeStart(settings.diffType, effectiveLevel());
+  // Com varios tipos marcados, cada desafio sorteia um (sem repetir o
+  // anterior); um so marcado = sempre ele.
+  lastChalType = challengePickType(settings.chalMask, lastChalType);
+  challengeStart(lastChalType, effectiveLevel());
   chalStartMs  = millis();
   chalTotalMs  = settings.chalTimeS * 1000UL;
   commSendAlarm("DISMISS");
@@ -406,12 +440,20 @@ static void handleAlarmConfig(int a) {
     case ACT_ALM_TOGGLE: settings.almEnabled = !settings.almEnabled;        break;
     case ACT_LIGHT_UP: settings.lightPct = min(100, settings.lightPct + 10); break;
     case ACT_LIGHT_DN: settings.lightPct = max(WIZ_DIM_MIN, settings.lightPct - 10); break;
-    case ACT_VIB_CYCLE: settings.vibMode = (settings.vibMode + 1) % 3;      break;
+    case ACT_VIB_CYCLE: settings.vibMode = (settings.vibMode + 1) % 4;      break;
     case ACT_RAMP_CYCLE:   settings.rampMin   = cycleNext(settings.rampMin,   RAMP, RAMP_MIN_COUNT);  break;
     case ACT_CHTIME_CYCLE: settings.chalTimeS = cycleNext(settings.chalTimeS, CHAL, CHAL_TIME_COUNT); break;
     default:
       if (a >= ACT_DIFF_0 && a <= ACT_DIFF_3) settings.diffLevel = a - ACT_DIFF_0;
-      if (a >= ACT_TYPE_0 && a <= ACT_TYPE_3) settings.diffType  = a - ACT_TYPE_0;
+      if (a >= ACT_TYPE_0 && a <= ACT_TYPE_3) {
+        // Marca/desmarca o tipo. O ultimo marcado nao pode sair.
+        int bit = 1 << (a - ACT_TYPE_0);
+        if (settings.chalMask == bit) {
+          uiToast("Marque pelo menos 1 tipo", C_WARN);
+          return;
+        }
+        settings.chalMask ^= bit;
+      }
       break;
   }
   scheduleRedraw();
@@ -505,8 +547,19 @@ static void handleTap(int x, int y) {
 
     case ACT_SAVE:
       storageSave();
-      uiToast("Configuracoes salvas", C_OK);
+      uiToast(settings.demoMode ? "Salvo (alarme do demo nao grava)"
+                                : "Configuracoes salvas", C_OK);
       return;
+
+    case ACT_DEMO_TOGGLE: {
+      bool on = !settings.demoMode;
+      appSetDemo(on);
+      switchScreen(SCREEN_SETTINGS);
+      if (on)                   uiToast("DEMO: 07:29, alarme 07:30", C_WARN);
+      else if (netTimeSynced()) uiToast("PRODUCAO: hora pela internet", C_OK);
+      else                      uiToast("PRODUCAO: ajuste a hora", C_WARN);
+      return;
+    }
 
     case ACT_BACK:
     case ACT_T_CONFIRM:
@@ -569,12 +622,13 @@ void setup() {
   challengeInit();
   nightBegin();
 
-#ifdef DEMO_MODE
-  rtc.begin(DEMO_START_H, DEMO_START_M, DEMO_START_S);
-  Serial.println(F("[BOOT] DEMO_MODE: alarme dispara em ~1 minuto"));
-#else
-  rtc.begin(0, 0, 0);
-#endif
+  if (settings.demoMode) {
+    rtc.begin(DEMO_START_H, DEMO_START_M, DEMO_START_S);
+    Serial.println(F("[BOOT] modo DEMO: alarme dispara em ~1 minuto"));
+  } else {
+    rtc.begin(0, 0, 0);
+    Serial.println(F("[BOOT] modo PRODUCAO"));
+  }
 
   netBegin();            // Wi-Fi da casa ou portal "Despertador-XXXX"
   portalBegin();         // http://despertador.local / 192.168.4.1
@@ -584,6 +638,7 @@ void setup() {
   lastTouchMs = millis();
   switchScreen(SCREEN_CLOCK);
   if (!touchAvailable()) uiToast("Touch indisponivel", C_DANGER);
+  else if (settings.demoMode) uiToast("MODO DEMO: alarme as 07:30", C_WARN);
   else if (netState() == NET_NO_CREDS) uiToast("Wi-Fi: conecte em Despertador-...", C_WARN);
 }
 
@@ -659,6 +714,12 @@ void loop() {
     uiRingingUpdate(stage, ringElapsed(), effectiveLevel(), flashState);
   } else if (alState == AL_CHALLENGE) {
     updateChallenge();
+  }
+
+  /* Fim do teste de vibracao do portal. */
+  if (vibTestUntil && (long)(millis() - vibTestUntil) >= 0) {
+    vibTestUntil = 0;
+    if (alState == AL_IDLE) commSendVib("OFF");
   }
 
   /* Status periodico do Actuator. */

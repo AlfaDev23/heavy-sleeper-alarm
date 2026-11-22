@@ -7,27 +7,32 @@
 
 #include <Arduino.h>
 
-#define FW_VERSION "0.4.0-alpha"
+#define FW_VERSION "0.4.1-alpha"
 
 /* ═══════════════════════════════════════════════════════════════════
-   MODO DEMO
-   Comente a linha DEMO_MODE para uso real (relogio comeca em 00:00).
-   ═══════════════════════════════════════════════════════════════════ */
-#define DEMO_MODE
+   MODO DEMO x PRODUCAO
+   Desde a v0.4.1 o modo e escolhido com a placa montada, sem recompilar:
+   tela AJUSTES -> MODO, ou no portal (secao "Modo de operacao"). A escolha
+   fica gravada na NVS (chave demo_mode).
 
-#ifdef DEMO_MODE
-  #define DEMO_START_H 7    // relogio inicia em 07:29:00 ...
-  #define DEMO_START_M 29
-  #define DEMO_START_S 0
-  #define DEMO_ALM_H   7    // ... e o alarme dispara em ~1 minuto
-  #define DEMO_ALM_M   30
-  // Escala o tempo de escalonamento para segundos, senao a demo
-  // levaria 10 minutos para chegar ao nivel maximo. Comente para
-  // usar os tempos reais (2/5/10 min) mesmo em modo demo.
-  #define DEMO_FAST_ESCALATE
-  // Em modo demo a hora NAO e sobrescrita pelo NTP, senao a demo perderia
-  // o horario 07:29 assim que o Wi-Fi conectasse.
-#endif
+   Ao LIGAR o demo: relogio vai para 07:29:00 e o alarme para 07:30 (so na
+   RAM: o alarme de verdade continua salvo), hora do NTP ignorada e, com
+   DEMO_FAST_TIMES, escalada/soneca/rampa encurtadas.
+   Ao DESLIGAR: o alarme salvo volta e a hora volta a vir do NTP (sem
+   internet, acerte em AJUSTES -> AJUSTAR HORA).
+   ═══════════════════════════════════════════════════════════════════ */
+#define DEMO_DEFAULT  false  // modo de fabrica (1o boot / NVS corrompida)
+#define DEMO_START_H  7      // relogio do demo comeca em 07:29:00 ...
+#define DEMO_START_M  29
+#define DEMO_START_S  0
+#define DEMO_ALM_H    7      // ... e o alarme dispara em ~1 minuto
+#define DEMO_ALM_M    30
+// Tempos curtos no demo (20/45/80 s, soneca 30 s, rampa 45 s), senao a
+// apresentacao levaria 10 minutos. Use 0 para o demo com os tempos reais.
+#define DEMO_FAST_TIMES 1
+
+/* True se o demo esta ligado agora com os tempos curtos (storage.cpp). */
+bool demoFastTimes();
 
 /* ═══════════════════════════════════════════════════════════════════
    PINOS — board E32R28T (LCDWIKI / QDtech), conforme datasheet oficial
@@ -108,17 +113,16 @@
 #define ALARM_ESCALATE_10MIN 10
 
 /* Limiares de escalonamento em milissegundos desde o disparo. */
-#ifdef DEMO_FAST_ESCALATE
-  #define ESC_T1_MS  20000UL   // estagio 2
-  #define ESC_T2_MS  45000UL   // estagio 3
-  #define ESC_T3_MS  80000UL   // estagio 4 (log ALARM:ESCALATED)
-  #define SNOOZE_MS  30000UL   // soneca curta para demonstracao
-#else
-  #define ESC_T1_MS  (ALARM_ESCALATE_2MIN  * 60000UL)
-  #define ESC_T2_MS  (ALARM_ESCALATE_5MIN  * 60000UL)
-  #define ESC_T3_MS  (ALARM_ESCALATE_10MIN * 60000UL)
-  #define SNOOZE_MS  (ALARM_SNOOZE_MIN     * 60000UL)
-#endif
+/* Decididos em tempo de execucao: o demo pode ser ligado pela tela. */
+#define ESC_T1_MS  (demoFastTimes() ? 20000UL : ALARM_ESCALATE_2MIN  * 60000UL) // estagio 2
+#define ESC_T2_MS  (demoFastTimes() ? 45000UL : ALARM_ESCALATE_5MIN  * 60000UL) // estagio 3
+#define ESC_T3_MS  (demoFastTimes() ? 80000UL : ALARM_ESCALATE_10MIN * 60000UL) // estagio 4
+#define SNOOZE_MS  (demoFastTimes() ? 30000UL : ALARM_SNOOZE_MIN     * 60000UL)
+
+/* PWM (%) de cada intensidade da vibracao: fraca, media, maxima. Padrao de
+   fabrica; o valor certo depende do motor e e ajustado no portal. */
+#define VIB_DUTY_DEFAULTS { 45, 70, 100 }
+#define VIB_TEST_MS       2000UL   // botao "Testar" do portal: vibra 2 s
 
 /* Desligar o alarme: segurar o botao DESLIGAR por este tempo. Tem que ser
    MAIOR que TOUCH_LONGPRESS_MS, senao a soltura do dedo vira um toque. */
@@ -131,9 +135,7 @@
 #define RAMP_MIN_COUNT   4
 
 /* Em demo a rampa precisa caber no minuto entre 07:29 e 07:30. */
-#ifdef DEMO_FAST_ESCALATE
-  #define DEMO_RAMP_S    45
-#endif
+#define DEMO_RAMP_S    45
 
 /* ═══════════════════════════════════════════════════════════════════
    WI-FI, PORTAL E HORA PELA INTERNET
@@ -231,8 +233,13 @@ enum NightMode { NIGHT_AUTO = 0, NIGHT_FORCE_DAY, NIGHT_FORCE_NIGHT };
 enum DiffLevel { DIFF_EASY = 0, DIFF_MEDIUM, DIFF_HARD, DIFF_EXTREME };
 
 enum ChalType { CHAL_MATH = 0, CHAL_MEMORY, CHAL_SEQUENCE, CHAL_REACTION };
+#define CHAL_TYPE_COUNT 4
+#define CHAL_MASK_ALL   0x0F   // os 4 tipos marcados
 
-enum VibMode { VIB_MODE_OFF = 0, VIB_MODE_WEAK, VIB_MODE_STRONG };
+/* Vibracao: ate onde a escalada sobe. FRACA = so pulsos fracos;
+   MEDIA = fraca pulsada -> media continua; MAXIMA = fraca -> media -> maxima.
+   O PWM de cada intensidade e ajustado no portal (settings.vibDuty[]). */
+enum VibMode { VIB_MODE_OFF = 0, VIB_MODE_WEAK, VIB_MODE_MEDIUM, VIB_MODE_MAX };
 
 /* Janela de resposta do desafio de REACAO, por nivel (ms).
    Ajuste aqui se os testes indicarem que esta apertado demais. */

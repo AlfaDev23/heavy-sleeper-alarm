@@ -3,7 +3,9 @@
  *
  * Fica na flash (PROGMEM). A pagina so fala com a API JSON do portal.cpp:
  *   GET  /api/state          estado completo
- *   POST /api/save           alarme, lampada, modo noturno e fuso
+ *   POST /api/save           alarme (chalMask = tipos marcados), lampada, modo noturno e fuso
+ *   POST /api/mode           demo=1 (demonstracao) / demo=0 (producao)
+ *   POST /api/vib/test       duty=0-100: vibra 2 s nessa intensidade
  *   GET  /api/scan           redes Wi-Fi proximas
  *   POST /api/wifi           grava SSID/senha e reconecta
  *   POST /api/wifi/forget    apaga a rede salva
@@ -43,6 +45,8 @@ button.small{width:auto;padding:6px 12px;margin:4px 0}
 #toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:#21262d;border:1px solid var(--line);padding:10px 16px;border-radius:10px;display:none;max-width:90%}
 .busy{background:#3d1d1d;border:1px solid var(--bad);border-radius:10px;padding:10px;margin:10px 0;display:none}
 output{float:right;color:var(--tx)}
+.types{display:grid;grid-template-columns:1fr 1fr;gap:0 10px}.types .chk{margin:6px 0}
+.vib .row{align-items:center}.vib .row>button{flex:0 0 auto}
 </style></head><body>
 <header><h1>Despertador Heavy Sleeper</h1><p id="hdr">carregando...</p></header>
 <main>
@@ -53,19 +57,21 @@ output{float:right;color:var(--tx)}
 <div class="kv"><span>Wi-Fi</span><b id="s_net">--</b></div>
 <div class="kv"><span>Lampada</span><b id="s_wiz">--</b></div>
 <div class="kv"><span>Tela</span><b id="s_night">--</b></div>
+<div class="kv"><span>Modo</span><b id="s_mode">--</b></div>
 </section>
 
 <form id="cfg" onsubmit="return save(event)">
 <section><h2>Alarme</h2>
 <div class="row"><div><label>Horario</label><input type="time" name="almTime" required></div>
 <div><label>&nbsp;</label><label class="chk"><input type="checkbox" name="almEn" value="1">Ativo</label></div></div>
-<div class="row"><div><label>Desafio</label><select name="type">
-<option value="0">Matematica</option><option value="1">Memoria</option><option value="2">Sequencia</option><option value="3">Reacao</option></select></div>
-<div><label>Dificuldade</label><select name="diff">
+<label>Desafios (marque um ou mais: cada desafio sorteia um deles)</label>
+<div class="types"><label class="chk"><input type="checkbox" class="tchk" value="0">Matematica</label><label class="chk"><input type="checkbox" class="tchk" value="1">Memoria</label>
+<label class="chk"><input type="checkbox" class="tchk" value="2">Sequencia</label><label class="chk"><input type="checkbox" class="tchk" value="3">Reacao</label></div>
+<div class="row"><div><label>Dificuldade</label><select name="diff">
 <option value="0">Facil</option><option value="1">Medio</option><option value="2">Dificil</option><option value="3">Extremo</option></select></div></div>
 <div class="row"><div><label>Tempo para resolver</label><select name="chal">
 <option value="30">30 s</option><option value="60">60 s</option><option value="90">90 s</option><option value="120">120 s</option></select></div>
-<div><label>Vibracao</label><select name="vib"><option value="0">Desligada</option><option value="1">Fraca</option><option value="2">Forte</option></select></div></div>
+<div><label>Vibracao (ate onde sobe)</label><select name="vib"><option value="0">Desligada</option><option value="1">Fraca</option><option value="2">Media</option><option value="3">Maxima</option></select></div></div>
 </section>
 
 <section><h2>Luz (lampada WiZ)</h2>
@@ -77,6 +83,14 @@ output{float:right;color:var(--tx)}
 <div class="row"><button type="button" onclick="post('/api/wiz/discover','Procurando lampadas...')">Procurar</button>
 <button type="button" onclick="post('/api/wiz/test','Piscando a lampada')">Testar</button></div>
 <p class="sub">Se a lampada nao responder, ligue a opcao de comunicacao local no app WiZ. Reservar o IP dela no roteador evita que ele mude.</p>
+</section>
+
+<section><h2>Intensidade da vibracao</h2>
+<p class="sub">PWM do motor em cada nivel. Mexa no controle e toque em <b>Testar</b> (vibra 2 s, sem salvar). Achou o ponto? <b>Salvar configuracoes</b>.</p>
+<div class="vib"><label>Fraca <output id="o_vibW"></output></label><div class="row"><input type="range" name="vibW" min="0" max="100" step="5" oninput="vo(this)"><button type="button" class="small" onclick="vt('vibW')">Testar</button></div></div>
+<div class="vib"><label>Media <output id="o_vibM"></output></label><div class="row"><input type="range" name="vibM" min="0" max="100" step="5" oninput="vo(this)"><button type="button" class="small" onclick="vt('vibM')">Testar</button></div></div>
+<div class="vib"><label>Maxima <output id="o_vibX"></output></label><div class="row"><input type="range" name="vibX" min="0" max="100" step="5" oninput="vo(this)"><button type="button" class="small" onclick="vt('vibX')">Testar</button></div></div>
+<p class="sub">No alarme: comeca na fraca (pulsando), passa para a media continua aos 2 min e para a maxima aos 5 min, sem passar do nivel escolhido em Vibracao. Se o motor nao girar numa intensidade baixa, suba o valor dela.</p>
 </section>
 
 <section><h2>Modo noturno</h2>
@@ -93,6 +107,12 @@ output{float:right;color:var(--tx)}
 </section>
 </form>
 
+<section><h2>Modo de operacao</h2>
+<p class="sub" id="m_txt"></p>
+<button type="button" id="m_btn" onclick="mode()">--</button>
+<p class="sub"><b>Producao</b> = uso real: hora pela internet e o alarme que voce configurou. <b>Demo</b> = apresentacao: relogio vai para 07:29, alarme as 07:30 e tempos curtos. O alarme salvo nao se perde ao usar o demo.</p>
+</section>
+
 <section><h2>Rede Wi-Fi</h2>
 <div class="list" id="nets"></div>
 <button type="button" onclick="scan()">Procurar redes</button>
@@ -106,25 +126,32 @@ output{float:right;color:var(--tx)}
 <p class="sub" id="fw"></p>
 </main><div id="toast"></div>
 <script>
-const $=s=>document.querySelector(s),F=$('#cfg');let loaded=false;
+const $=s=>document.querySelector(s),F=$('#cfg');let loaded=false,demo=false;
 const hm=m=>String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0');
 function toast(t){const e=$('#toast');e.textContent=t;e.style.display='block';clearTimeout(e._t);e._t=setTimeout(()=>e.style.display='none',3500)}
 function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
 async function post(u,msg,body){try{const r=await fetch(u,{method:'POST',body:body||new URLSearchParams()});const j=await r.json().catch(()=>({}));
 toast(r.ok?(msg||'OK'):(j.error||('Erro '+r.status)));setTimeout(refresh,800);return r.ok}catch(e){toast('Sem resposta do despertador');return false}}
-function fill(s){const a=s.alarm,n=s.night;F.almTime.value=hm(a.h*60+a.m);F.almEn.checked=a.en;F.type.value=a.type;F.diff.value=a.diff;
+function fill(s){const a=s.alarm,n=s.night;F.almTime.value=hm(a.h*60+a.m);F.almEn.checked=a.en;document.querySelectorAll('.tchk').forEach(c=>c.checked=!!(a.mask>>c.value&1));F.diff.value=a.diff;
 F.chal.value=a.chal;F.vib.value=a.vib;F.ramp.value=a.ramp;F.light.value=a.light;$('#lv').value=a.light+'%';
-F.wizIp.value=s.wiz.cfgIp;F.nightMode.value=n.mode;F.nightStart.value=hm(n.start);F.nightEnd.value=hm(n.end);F.tz.value=s.tz}
+['vibW','vibM','vibX'].forEach((k,i)=>{F[k].value=a.vibD[i];vo(F[k])});F.wizIp.value=s.wiz.cfgIp;F.nightMode.value=n.mode;F.nightStart.value=hm(n.start);F.nightEnd.value=hm(n.end);F.tz.value=s.tz}
 function show(s){const N=s.net,W=s.wiz;$('#hdr').textContent=N.state==='CONECTADO'?('Na rede '+N.ssid+' - '+N.ip):(N.ap?('Portal: '+N.apSsid):N.state);
 $('#s_time').innerHTML=esc(s.time)+(s.ntp?' <span class="ok">(internet)</span>':' <span class="warn">(manual)</span>');
 $('#s_net').innerHTML='<span class="'+(N.state==='CONECTADO'?'ok':'warn')+'">'+esc(N.state)+'</span>'+(N.ssid?' '+esc(N.ssid):'')+(N.ip&&N.state==='CONECTADO'?' - '+esc(N.ip):'');
 $('#s_wiz').innerHTML='<span class="'+(W.status==='ONLINE'?'ok':'warn')+'">'+esc(W.status)+'</span>'+(W.ip?' '+esc(W.ip)+(W.fixed?' (fixo)':' (auto)'):'');
 $('#s_night').textContent=(s.night.active?'modo noturno':'modo dia')+(s.sunrise?' - amanhecer em andamento':'');
 $('#found').innerHTML=W.found.map(f=>'<div><span>'+esc(f.ip)+' <span class="sub">'+esc(f.mac)+'</span></span><button type="button" class="small" onclick="F.wizIp.value=\''+esc(f.ip)+'\';toast(\'Toque em Salvar para fixar\')">Usar</button></div>').join('');
+$('#s_mode').innerHTML=s.demo?'<span class="warn">DEMO</span>':'<span class="ok">PRODUCAO</span>';
+$('#m_txt').innerHTML='Agora: '+$('#s_mode').innerHTML;$('#m_btn').textContent=s.demo?'Mudar para PRODUCAO':'Mudar para DEMO';demo=s.demo;
 $('#busy').style.display=s.alarm.busy?'block':'none';$('#fw').textContent='Firmware '+s.fw}
 async function refresh(){try{const s=await (await fetch('/api/state')).json();if(!loaded){fill(s);loaded=true}show(s)}catch(e){$('#hdr').textContent='sem conexao com o despertador'}}
-async function save(e){e.preventDefault();const b=new URLSearchParams(new FormData(F));if(!F.almEn.checked)b.set('almEn','0');
+async function save(e){e.preventDefault();let m=0;document.querySelectorAll('.tchk:checked').forEach(c=>m|=1<<c.value);
+if(!m){toast('Marque pelo menos 1 tipo de desafio');return false}const b=new URLSearchParams(new FormData(F));b.set('chalMask',m);if(!F.almEn.checked)b.set('almEn','0');
 if(await post('/api/save','Configuracoes salvas',b)){loaded=false}return false}
+function vo(e){$('#o_'+e.name).value=e.value+'%'}
+function vt(k){const b=new URLSearchParams();b.set('duty',F[k].value);post('/api/vib/test','Vibrando '+F[k].value+'% por 2 s',b)}
+async function mode(){const on=!demo;if(!confirm(on?'Ligar o DEMO? O relogio vai para 07:29 e o alarme toca as 07:30.':'Voltar para PRODUCAO? A hora volta a vir da internet e o alarme salvo volta.'))return;
+const b=new URLSearchParams();b.set('demo',on?'1':'0');if(await post('/api/mode',on?'Modo DEMO':'Modo PRODUCAO',b)){loaded=false}}
 async function wifi(e){e.preventDefault();const b=new URLSearchParams(new FormData(e.target));
 await post('/api/wifi','Conectando... veja o IP na tela do despertador',b);return false}
 async function scan(){$('#nets').innerHTML='<div class="sub">procurando...</div>';for(let i=0;i<15;i++){try{const j=await (await fetch('/api/scan')).json();

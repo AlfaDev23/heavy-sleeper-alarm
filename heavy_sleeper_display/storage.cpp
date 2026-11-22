@@ -25,9 +25,11 @@ void storageResetDefaults() {
   settings.almMin       = 0;
   settings.almEnabled   = true;
   settings.diffLevel    = DIFF_EASY;
-  settings.diffType     = CHAL_MATH;
+  settings.chalMask     = 1 << CHAL_MATH;
   settings.lightPct     = 100;
   settings.vibMode      = VIB_MODE_WEAK;
+  static const int VD[3] = VIB_DUTY_DEFAULTS;
+  for (int i = 0; i < 3; i++) settings.vibDuty[i] = VD[i];
   settings.snoozeCount  = 0;
   settings.lastAlarmDay = -1;
   settings.rampMin      = 10;
@@ -35,6 +37,25 @@ void storageResetDefaults() {
   settings.nightMode    = NIGHT_AUTO;
   settings.nightStart   = 22 * 60;
   settings.nightEnd     = 6 * 60;
+  settings.demoMode     = DEMO_DEFAULT;
+}
+
+bool demoFastTimes() { return DEMO_FAST_TIMES && settings.demoMode; }
+
+/* Alarme da apresentacao: so na RAM, nunca vai para a NVS. */
+static void applyDemoAlarm() {
+  settings.almHour    = DEMO_ALM_H;
+  settings.almMin     = DEMO_ALM_M;
+  settings.almEnabled = true;
+}
+
+/* Rele da NVS o alarme de verdade (ao sair do demo). */
+static void loadAlarm() {
+  settings.almHour    = prefs.getInt ("alm_hour",    7);
+  settings.almMin     = prefs.getInt ("alm_min",     0);
+  settings.almEnabled = prefs.getBool("alm_enabled", true);
+  if (settings.almHour < 0 || settings.almHour > 23) settings.almHour = 7;
+  if (settings.almMin  < 0 || settings.almMin  > 59) settings.almMin  = 0;
 }
 
 /* Rede: vazia, lampada em modo automatico e fuso de Brasilia. */
@@ -49,9 +70,11 @@ static void sanitize() {
   if (settings.almHour   < 0 || settings.almHour   > 23) bad = true;
   if (settings.almMin    < 0 || settings.almMin    > 59) bad = true;
   if (settings.diffLevel < 0 || settings.diffLevel > 3)  bad = true;
-  if (settings.diffType  < 0 || settings.diffType  > 3)  bad = true;
+  if (settings.chalMask  < 1 || settings.chalMask  > CHAL_MASK_ALL) bad = true;
   if (settings.lightPct  < WIZ_DIM_MIN || settings.lightPct > 100) bad = true;
-  if (settings.vibMode   < 0 || settings.vibMode   > 2)  bad = true;
+  if (settings.vibMode   < 0 || settings.vibMode   > 3)  bad = true;
+  for (int i = 0; i < 3; i++)
+    if (settings.vibDuty[i] < 0 || settings.vibDuty[i] > 100) bad = true;
   if (settings.snoozeCount < 0) bad = true;
   if (!inList(settings.rampMin,   RAMP_OPTS, RAMP_MIN_COUNT))  bad = true;
   if (!inList(settings.chalTimeS, CHAL_OPTS, CHAL_TIME_COUNT)) bad = true;
@@ -80,9 +103,26 @@ void storageBegin() {
   settings.almMin       = prefs.getInt ("alm_min",       settings.almMin);
   settings.almEnabled   = prefs.getBool("alm_enabled",   settings.almEnabled);
   settings.diffLevel    = prefs.getInt ("diff_level",    settings.diffLevel);
-  settings.diffType     = prefs.getInt ("diff_type",     settings.diffType);
+  // v0.4.1: varios tipos de desafio (chave nova chal_mask). Quem vem da
+  // chave antiga diff_type (um tipo so, 0-3) vira a mascara desse tipo.
+  if (prefs.isKey("chal_mask")) {
+    settings.chalMask = prefs.getInt("chal_mask", settings.chalMask);
+  } else if (prefs.isKey("diff_type")) {
+    int old = prefs.getInt("diff_type", 0);
+    if (old >= 0 && old <= 3) settings.chalMask = 1 << old;
+  }
   settings.lightPct     = prefs.getInt ("light_pct",     settings.lightPct);
-  settings.vibMode      = prefs.getInt ("vib_mode",      settings.vibMode);
+  // v0.4.1: a vibracao ganhou o nivel MEDIA (chave nova vib_lvl). Quem vem
+  // da chave antiga vib_mode (0 off, 1 fraca, 2 forte) e convertido.
+  if (prefs.isKey("vib_lvl")) {
+    settings.vibMode = prefs.getInt("vib_lvl", settings.vibMode);
+  } else if (prefs.isKey("vib_mode")) {
+    int old = prefs.getInt("vib_mode", 1);
+    settings.vibMode = (old == 2) ? VIB_MODE_MAX : old;
+  }
+  settings.vibDuty[0]   = prefs.getInt ("vib_d0",        settings.vibDuty[0]);
+  settings.vibDuty[1]   = prefs.getInt ("vib_d1",        settings.vibDuty[1]);
+  settings.vibDuty[2]   = prefs.getInt ("vib_d2",        settings.vibDuty[2]);
   settings.snoozeCount  = prefs.getInt ("snooze_count",  settings.snoozeCount);
   settings.lastAlarmDay = prefs.getInt ("last_alarm_day", settings.lastAlarmDay);
   settings.rampMin      = prefs.getInt ("ramp_min",      settings.rampMin);
@@ -90,6 +130,7 @@ void storageBegin() {
   settings.nightMode    = prefs.getInt ("night_mode",    settings.nightMode);
   settings.nightStart   = prefs.getInt ("night_start",   settings.nightStart);
   settings.nightEnd     = prefs.getInt ("night_end",     settings.nightEnd);
+  settings.demoMode     = prefs.getBool("demo_mode",     settings.demoMode);
 
   // Chaves de rede. isKey() antes de ler evita o log de erro da NVS
   // ("NOT_FOUND") no primeiro boot, quando elas ainda nao existem.
@@ -101,31 +142,32 @@ void storageBegin() {
 
   sanitize();
 
-#ifdef DEMO_MODE
   // Em modo demo o alarme e forcado para o horario da apresentacao.
-  settings.almHour    = DEMO_ALM_H;
-  settings.almMin     = DEMO_ALM_M;
-  settings.almEnabled = true;
-#endif
+  if (settings.demoMode) applyDemoAlarm();
 
-  Serial.printf("[STORAGE] alarme=%02d:%02d en=%d nivel=%d tipo=%d luz=%d%% vib=%d "
-                "rampa=%dmin desafio=%ds noite=%d wifi='%s' wiz='%s'\n",
+  Serial.printf("[STORAGE] alarme=%02d:%02d en=%d nivel=%d tipos=0x%X luz=%d%% vib=%d "
+                "rampa=%dmin desafio=%ds noite=%d modo=%s wifi='%s' wiz='%s'\n",
                 settings.almHour, settings.almMin, settings.almEnabled,
-                settings.diffLevel, settings.diffType,
+                settings.diffLevel, settings.chalMask,
                 settings.lightPct, settings.vibMode,
                 settings.rampMin, settings.chalTimeS, settings.nightMode,
-                netcfg.ssid, netcfg.wizIp[0] ? netcfg.wizIp : "auto");
+                settings.demoMode ? "DEMO" : "PRODUCAO", netcfg.ssid, netcfg.wizIp[0] ? netcfg.wizIp : "auto");
 }
 
 /* Grava a struct inteira de volta na NVS. */
 void storageSave() {
-  prefs.putInt ("alm_hour",       settings.almHour);
-  prefs.putInt ("alm_min",        settings.almMin);
-  prefs.putBool("alm_enabled",    settings.almEnabled);
+  if (!settings.demoMode) {       // no demo o alarme em RAM e o da apresentacao
+    prefs.putInt ("alm_hour",     settings.almHour);
+    prefs.putInt ("alm_min",      settings.almMin);
+    prefs.putBool("alm_enabled",  settings.almEnabled);
+  }
   prefs.putInt ("diff_level",     settings.diffLevel);
-  prefs.putInt ("diff_type",      settings.diffType);
+  prefs.putInt ("chal_mask",      settings.chalMask);
   prefs.putInt ("light_pct",      settings.lightPct);
-  prefs.putInt ("vib_mode",       settings.vibMode);
+  prefs.putInt ("vib_lvl",        settings.vibMode);
+  prefs.putInt ("vib_d0",         settings.vibDuty[0]);
+  prefs.putInt ("vib_d1",         settings.vibDuty[1]);
+  prefs.putInt ("vib_d2",         settings.vibDuty[2]);
   prefs.putInt ("snooze_count",   settings.snoozeCount);
   prefs.putInt ("last_alarm_day", settings.lastAlarmDay);
   prefs.putInt ("ramp_min",       settings.rampMin);
@@ -133,7 +175,25 @@ void storageSave() {
   prefs.putInt ("night_mode",     settings.nightMode);
   prefs.putInt ("night_start",    settings.nightStart);
   prefs.putInt ("night_end",      settings.nightEnd);
+  prefs.putBool("demo_mode",      settings.demoMode);
   Serial.println(F("[STORAGE] configuracoes salvas"));
+}
+
+/* Liga/desliga o demo: grava a escolha e troca o alarme em RAM. */
+void storageSetDemo(bool on) {
+  if (on == settings.demoMode) return;
+  if (on) {
+    storageSave();                // garante o alarme de verdade na NVS antes
+    settings.demoMode = true;
+    applyDemoAlarm();
+  } else {
+    settings.demoMode = false;
+    loadAlarm();
+  }
+  prefs.putBool("demo_mode", settings.demoMode);
+  Serial.printf("[STORAGE] modo %s (alarme %02d:%02d en=%d)\n",
+                on ? "DEMO" : "PRODUCAO", settings.almHour, settings.almMin,
+                settings.almEnabled);
 }
 
 /* Grava SSID, senha, IP da lampada e fuso. */

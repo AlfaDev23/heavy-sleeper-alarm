@@ -22,7 +22,7 @@ void commBegin() {
 
 /* Envia o estado atual da luz e da vibracao. */
 static void sendStatus() {
-  Serial2.printf("STATUS:LIGHT:%d,VIB:%s\n", lightTarget(), vibName());
+  Serial2.printf("STATUS:LIGHT:%d,VIB:%s,DUTY:%d\n", lightTarget(), vibName(), vibDuty());
 }
 
 /* Executa um comando do protocolo e responde. */
@@ -49,6 +49,11 @@ void parseCommand(String cmd) {
   } else if (cmd == "VIB:OFF") {
     setVib(VIB_OFF);
     Serial2.print(F("ACK:VIB:OFF\n"));
+
+  } else if (cmd.startsWith("VIB:DUTY:")) {
+    int pct = constrain(cmd.substring(9).toInt(), 0, 100);
+    setVibDuty(pct);
+    Serial2.printf("ACK:VIB:DUTY:%d\n", pct);
 
   } else if (cmd == "VIB:PULSE") {
     setVib(VIB_PULSE);

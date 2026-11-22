@@ -12,9 +12,10 @@ struct Settings {
   int  almMin;       // 0-59
   bool almEnabled;   // alarme armado?
   int  diffLevel;    // DiffLevel 0-3
-  int  diffType;     // ChalType 0-3
+  int  chalMask;     // tipos de desafio marcados: bit ChalType (1-15)
   int  lightPct;     // brilho maximo da lampada WiZ, 10-100
-  int  vibMode;      // VibMode 0-2
+  int  vibMode;      // VibMode 0-3: desligada / fraca / media / maxima
+  int  vibDuty[3];   // PWM em % da vibracao fraca, media e maxima
   int  snoozeCount;  // sonecas usadas hoje
   int  lastAlarmDay; // indice do dia do ultimo alarme (reset do snoozeCount)
 
@@ -24,6 +25,8 @@ struct Settings {
   int  nightMode;    // NightMode: AUTO / sempre dia / sempre noite
   int  nightStart;   // inicio da noite, em minutos do dia (ex. 22*60)
   int  nightEnd;     // fim da noite, em minutos do dia (ex. 6*60)
+
+  bool demoMode;     // true = demonstracao, false = producao (uso real)
 };
 
 /* Configuracao de rede (so muda pelo portal). */
@@ -41,6 +44,11 @@ void storageBegin();                          // abre a NVS e carrega tudo
 void storageSave();                           // grava as configuracoes atuais
 void storageSaveNet();                        // grava a NetConfig
 void storageResetDefaults();                  // volta aos padroes de fabrica
+
+/* Modo demo. Com ele ligado o alarme em RAM e o da apresentacao (07:30) e
+   storageSave() NAO grava as chaves do alarme, para o alarme de verdade
+   sobreviver ao demo. */
+void storageSetDemo(bool on);                 // grava o modo e ajusta o alarme
 bool storageLoadTouchCal(uint16_t cal[5]);    // true se havia calibracao salva
 void storageSaveTouchCal(const uint16_t cal[5]);
 void storageClearTouchCal();                  // forca recalibracao no proximo boot

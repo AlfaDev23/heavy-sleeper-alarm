@@ -29,12 +29,12 @@ bool g_tapPending=false; bool touchTap(int&x,int&y){ if(!g_tapPending) return fa
 bool isTouched(int bx,int by,int bw,int bh,int tx,int ty){ return tx>=bx&&tx<bx+bw&&ty>=by&&ty<by+bh; }
 // ---- comm / audio
 const char* g_vib="OFF"; int g_audio=0;
-void commBegin(){} void commPoll(){} void commSendLight(int){} void commSendVib(const char*m){g_vib=m;}
+void commBegin(){} void commPoll(){} void commSendLight(int){} void commSendVib(const char*m){g_vib=m;} void commSendVibDuty(int){}
 void commRequestStatus(){} void commSendAlarm(const char*){} bool commActuatorOnline(){return true;}
 void audioBegin(){} void audioSetLevel(int l){g_audio=l;} int audioGetLevel(){return g_audio;} void stopAudio(){g_audio=0;}
 // ---- net / portal
 void netBegin(){} void netUpdate(){} NetState netState(){return NET_CONNECTED;} bool netConnected(){return true;}
-void netOpenPortal(){} void netClosePortal(){} bool netApActive(){return false;}
+bool netTimeSynced(){return false;} void netOpenPortal(){} void netClosePortal(){} bool netApActive(){return false;}
 void portalBegin(){} void portalUpdate(){}
 // ---- wiz
 bool g_wizOn=false; int g_dim=0,g_temp=0; int g_wizCmds=0;

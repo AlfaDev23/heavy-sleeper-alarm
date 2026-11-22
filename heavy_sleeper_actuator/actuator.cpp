@@ -16,6 +16,10 @@ static volatile bool gRamping      = false;
 
 /* ── Vibracao ───────────────────────────────────────────────────── */
 static volatile int gVibMode = VIB_OFF;
+static volatile int gVibPct  = VIB_DUTY_DEFAULT;   // intensidade em %
+
+/* Duty de 8 bits da intensidade atual. */
+static int vibDutyRaw() { return map(gVibPct, 0, 100, 0, (1 << VIB_RES) - 1); }
 
 /* Aplica a porcentagem no PWM da luz (sem USE_MOSFET_LIGHT so guarda o valor). */
 static void writeLight(int percent) {
@@ -55,12 +59,12 @@ static void vibTask(void* arg) {
   for (;;) {
     switch (gVibMode) {
       case VIB_ON:
-        pwmWrite(PWM_VIB, LEDC_CH_VIB, VIB_DUTY_ON);
+        pwmWrite(PWM_VIB, LEDC_CH_VIB, vibDutyRaw());
         vTaskDelay(pdMS_TO_TICKS(50));
         break;
 
       case VIB_PULSE:
-        pwmWrite(PWM_VIB, LEDC_CH_VIB, VIB_DUTY_ON);
+        pwmWrite(PWM_VIB, LEDC_CH_VIB, vibDutyRaw());
         for (int i = 0; i < VIB_PULSE_ON_MS / 50 && gVibMode == VIB_PULSE; i++)
           vTaskDelay(pdMS_TO_TICKS(50));      // sai rapido se o modo mudar
 
@@ -122,6 +126,11 @@ int lightCurrent() { return gLightCurrent; }
 void setVib(int mode) {
   gVibMode = constrain(mode, VIB_OFF, VIB_PULSE);
 }
+
+/* Intensidade da vibracao (vale ja no proximo ciclo da task). */
+void setVibDuty(int percent) { gVibPct = constrain(percent, 0, 100); }
+
+int vibDuty() { return gVibPct; }
 
 /* Modo de vibracao atual. */
 int vibMode() { return gVibMode; }

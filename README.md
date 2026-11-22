@@ -1,4 +1,4 @@
-# Despertador Heavy Sleepers — v0.4.0-alpha
+# Despertador Heavy Sleepers — v0.4.1-alpha
 
 Despertador para quem tem sono pesado, com dois ESP32 conversando por UART.
 Combina luz gradual (lâmpada Wi-Fi WiZ), vibração, som crescente e desafios
@@ -116,24 +116,39 @@ tests/host/run.sh
 
 Precisa de `g++` e `bash`. Compila a lógica real do display com tela, touch,
 Wi-Fi e lâmpada falsos e simula: rampa da luz, tocar, segurar DESLIGAR, errar, tempo esgotado,
-escalada, acerto, soneca e modo noturno — para os 4 tipos de desafio.
+escalada, acerto, soneca, modo noturno e a troca demo ↔ produção — para os
+4 tipos de desafio.
 
 ---
 
-## Modo demo
+## Modo demo × produção (sem recompilar)
 
-`config.h` do display traz `#define DEMO_MODE` ligado:
+Desde a v0.4.1 o modo é trocado **com a placa montada**, sem recompilar:
 
-- o relógio inicia em **07:29:00** e o alarme dispara em ~1 minuto;
-- a hora **não** é sobrescrita pelo NTP, mesmo com Wi-Fi;
-- `DEMO_FAST_ESCALATE` encurta os estágios de 2/5/10 min para **20/45/80 s**,
-  a soneca de 5 min para **30 s** e a rampa da lâmpada para **45 s** (começa
-  às 07:29:15), senão a apresentação levaria 10 minutos.
+- **Tela:** toque longo no relógio → **AJUSTES** → botão **MODO: PRODUÇÃO /
+  MODO: DEMO** (verde = produção, laranja = demo).
+- **Portal:** seção **Modo de operação** → *Mudar para DEMO / PRODUÇÃO*.
 
-Para uso real, comente `DEMO_MODE`. Para demo com os tempos verdadeiros,
-comente só `DEMO_FAST_ESCALATE`.
+A escolha fica gravada na NVS e sobrevive a reinícios. O padrão de fábrica é
+**produção** (`DEMO_DEFAULT` no `config.h`).
 
-Na tela **AJUSTES → TESTAR ALARME** o alarme dispara na hora, sem esperar.
+| | Produção (uso real) | Demo (apresentação) |
+|---|---|---|
+| Relógio | NTP (ou AJUSTAR HORA sem internet) | começa em **07:29:00**, NTP ignorado |
+| Alarme | o que você configurou | **07:30**, ativo |
+| Escalada | 2 / 5 / 10 min | 20 / 45 / 80 s |
+| Soneca | 5 min | 30 s |
+| Rampa da lâmpada | 5–20 min (configurável) | 45 s (começa às 07:29:15) |
+
+- O **alarme de verdade não se perde**: no demo o horário 07:30 fica só na
+  RAM e salvar não grava o alarme. Ao voltar para produção ele é restaurado.
+- Ao voltar para produção a hora vem do NTP no segundo seguinte. Sem
+  internet o relógio volta a 00:00: acerte em **AJUSTES → AJUSTAR HORA**.
+- A troca é recusada enquanto o alarme toca ou o desafio está na tela.
+- No demo a tela do relógio mostra **MODO DEMO** no rodapé.
+- Para um demo com os tempos reais, use `DEMO_FAST_TIMES 0` no `config.h`.
+
+Na tela **AJUSTES → TESTAR ALARME** o alarme dispara na hora, nos dois modos.
 
 ---
 
@@ -201,10 +216,26 @@ Telas de ajuste esquecidas abertas voltam sozinhas ao relógio depois de
 
 | Tempo **tocando** | Luz (WiZ) | Vibração | Som | Desafio |
 |---|---|---|---|---|
-| T=0 | brilho máximo | pulsada | nível 1 (suave) | nível configurado |
-| T=2 min | brilho máximo | contínua | nível 2 | +1 nível |
-| T=5 min | brilho máximo | contínua | nível 3 | +1 nível, tela pisca |
-| T=10 min | brilho máximo | contínua | nível 4 (sweep) | `ALARM:ESCALATED` no log |
+| T=0 | brilho máximo | fraca, pulsada | nível 1 (suave) | nível configurado |
+| T=2 min | brilho máximo | média, contínua | nível 2 | +1 nível |
+| T=5 min | brilho máximo | máxima, contínua | nível 3 | +1 nível, tela pisca |
+| T=10 min | brilho máximo | máxima, contínua | nível 4 (sweep) | `ALARM:ESCALATED` no log |
+
+A vibração nunca passa do nível escolhido em **Vibração** (tela ou portal):
+*Fraca* fica só nos pulsos fracos, *Média* para na média e *Máxima* vai até
+o fim.
+
+### Intensidade da vibração (PWM)
+
+O PWM de cada nível depende do motor, então é ajustado **no portal**, seção
+**Intensidade da vibração**: um controle de 0 a 100% para Fraca, Média e
+Máxima (padrão 45 / 70 / 100%). O botão **Testar** ao lado de cada um vibra
+2 s naquela intensidade **sem salvar**, para achar o ponto testando; depois,
+**Salvar configurações**. Se o motor não gira num valor baixo, suba esse
+nível. O teste é recusado com o alarme tocando ou o atuador offline.
+
+O Display manda `VIB:DUTY:<n>` antes de cada `VIB:ON`/`VIB:PULSE`. Precisa
+do **Actuator 0.4.1**: o antigo responde `NACK:INVALID` e vibra sempre a 80%.
 
 O relógio da escalada **só anda enquanto o alarme toca**: o tempo gasto
 resolvendo o desafio não conta. Errar e voltar a tocar retoma do estágio em
@@ -240,6 +271,14 @@ não funcionam). No modo AUTO a tela passa a seguir a luz do ambiente
 
 ## Desafios
 
+**Vários tipos ao mesmo tempo:** na tela **CONFIG. ALARME** os botões
+MAT / MEM / SEQ / REA ligam e desligam cada tipo (verde = marcado), e no
+portal são caixas de seleção. Com mais de um marcado, **cada desafio sorteia
+um tipo** entre os marcados — inclusive quando o alarme volta a tocar depois
+de um erro — e nunca repete o tipo do desafio anterior. Pelo menos um tipo
+fica sempre marcado. A tela do relógio mostra os marcados (ex.
+`MAT+MEM - MEDIO`).
+
 | Tipo | Fácil | Médio | Difícil | Extremo |
 |---|---|---|---|---|
 | **Matemática** | 1 díg + 1 díg | 2 díg ± 1 díg | multiplicação | dupla operação |
@@ -259,6 +298,7 @@ Display → Actuator:
 
 ```
 VIB:ON | VIB:OFF | VIB:PULSE
+VIB:DUTY:0 … VIB:DUTY:100    intensidade (%) dos próximos ON / PULSE
 STATUS?
 ALARM:START | DISMISS | RESUME | STOP | SNOOZE | ESCALATED   (só log)
 LIGHT:0 … LIGHT:100      RESERVADO: só com USE_MOSFET_LIGHT nas duas placas
@@ -269,7 +309,7 @@ Actuator → Display:
 ```
 READY                        no boot
 ACK:LIGHT:50 / ACK:VIB:ON    confirmação
-STATUS:LIGHT:50,VIB:ON
+STATUS:LIGHT:50,VIB:ON,DUTY:70
 NACK:INVALID                 comando desconhecido
 NACK:LIGHT_DISABLED          LIGHT: com a luz por MOSFET desativada
 PING?                        watchdog após 60 s sem comandos
@@ -291,8 +331,12 @@ Para criar opções novas no futuro: um campo no `<form id="cfg">` de
 ```
 GET  /                    página
 GET  /api/state           estado completo (JSON, sem a senha do Wi-Fi)
-POST /api/save            almTime, almEn, type, diff, chal, vib, ramp, light,
-                          wizIp, nightMode, nightStart, nightEnd, tz
+POST /api/save            almTime, almEn, chalMask (bits 1=MAT 2=MEM 4=SEQ
+                          8=REA), diff, chal, vib (0-3), vibW,
+                          vibM, vibX (PWM %), ramp, light, wizIp, nightMode,
+                          nightStart, nightEnd, tz
+POST /api/vib/test        duty=0-100 → vibra 2 s (não salva)
+POST /api/mode            demo=1 (demo) / demo=0 (producao)
 GET  /api/scan            redes Wi-Fi (assíncrono: repita até scanning=false)
 POST /api/wifi            ssid, pass → grava e reconecta
 POST /api/wifi/forget     apaga a rede e abre o portal
@@ -347,8 +391,8 @@ POST /api/wiz/test        pisca a lâmpada
   cada 30 s. Sem internet continua por software e perde a hora ao
   reiniciar; para funcionar sem Wi-Fi, ainda vale um DS3231.
 - **Novo na v0.4, a conferir na bancada:** hora pelo NTP e
-  `http://despertador.local` (com `DEMO_MODE` ligado o NTP não é aplicado:
-  comente-o para testar); rampa da lâmpada com os tempos reais e a faixa de
+  `http://despertador.local` (no modo demo o NTP não é aplicado: passe para
+  produção para testar); rampa da lâmpada com os tempos reais e a faixa de
   temperatura da sua lâmpada; som com o Wi-Fi ligado (o rádio também usa o
   Core 0, onde roda a task de áudio, e pode haver pequenos cortes); se segurar DESLIGAR por 2 s é confortável no touch
   resistivo (uma falha de leitura de até 150 ms não zera a contagem); se o

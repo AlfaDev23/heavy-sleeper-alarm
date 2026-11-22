@@ -65,4 +65,12 @@ void challengeResetAttempts();
 const char* diffName(int level);             // "FACIL".."EXTREMO"
 const char* typeName(int type);              // "MATEMATICA".."REACAO"
 
+/* Sorteia um tipo entre os marcados em mask (bit ChalType). Com 2 ou mais
+   marcados, nunca repete o tipo anterior (avoid; -1 = sem restricao). */
+int challengePickType(int mask, int avoid);
+
+/* Texto dos tipos marcados: o nome inteiro se for um so, senao as siglas
+   ("MAT+MEM"). Buffer estatico. */
+const char* typeMaskName(int mask);
+
 #endif /* CHALLENGES_H */
