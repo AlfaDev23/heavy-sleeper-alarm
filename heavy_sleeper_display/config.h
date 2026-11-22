@@ -7,7 +7,7 @@
 
 #include <Arduino.h>
 
-#define FW_VERSION "0.5.0-alpha"
+#define FW_VERSION "0.5.1-alpha"
 
 /* ═══════════════════════════════════════════════════════════════════
    MODO DEMO x PRODUCAO
@@ -126,6 +126,14 @@ bool demoFastTimes();
 #define RING_MAX_COUNT    6
 #define RING_MAX_DEFAULT  10
 #define RING_MAX_DEMO_MS  120000UL
+
+/* Volume do alarme (% da amplitude do DAC). O nivel 1 toca no inicial, o 4
+   no maximo e os niveis 2 e 3 ficam no meio do caminho. Ajustado no portal.
+   Padrao = o som da v0.5 (amplitudes 60 e 230 de 255). */
+#define VOL_START_DEFAULT  25
+#define VOL_MAX_DEFAULT    90
+#define VOL_MIN_PCT        5
+#define SOUND_TEST_MS      2000UL  // botao "Testar" do portal: toca 2 s
 
 /* PWM (%) de cada intensidade da vibracao: fraca, media, maxima. Padrao de
    fabrica; o valor certo depende do motor e e ajustado no portal. */

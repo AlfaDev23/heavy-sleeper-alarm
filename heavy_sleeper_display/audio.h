@@ -10,7 +10,9 @@
 void audioBegin();                          // cria a task de audio no Core 0
 void audioInit();                           // alias de audioBegin()
 void audioSetLevel(int level);              // 0=mudo, 1=suave ... 4=agressivo
-int  audioGetLevel();                       // nivel atual
+int  audioGetLevel();                       // nivel atual (5 = teste do portal)
+void audioSetVolume(int startPct, int maxPct); // volume do nivel 1 e do 4 (%)
+void audioTest(int melody, int pct);        // toca a melodia 1-4 no volume pct
 void stopAudio();                           // silencia imediatamente
 
 /* Amplificador do board (PIN_AMP_ENABLE, LOW = ligado). Chamadas feitas

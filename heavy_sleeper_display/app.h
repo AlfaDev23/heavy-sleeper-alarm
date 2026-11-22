@@ -28,4 +28,8 @@ bool appSetDemo(bool on);
    Recusa (false) com o alarme tocando ou no desafio. */
 bool appVibTest(int percent);
 
+/* Botao "Testar" do volume no portal: toca SOUND_TEST_MS a melodia do nivel
+   (1 = inicio, 4 = fim da escalada) no volume pct. false com alarme ativo. */
+bool appSoundTest(int melody, int pct);
+
 #endif /* APP_H */

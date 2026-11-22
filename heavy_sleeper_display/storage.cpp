@@ -37,6 +37,8 @@ void storageResetDefaults() {
   settings.vibMode      = VIB_MODE_WEAK;
   static const int VD[3] = VIB_DUTY_DEFAULTS;
   for (int i = 0; i < 3; i++) settings.vibDuty[i] = VD[i];
+  settings.volStart     = VOL_START_DEFAULT;
+  settings.volMax       = VOL_MAX_DEFAULT;
   settings.snoozeCount  = 0;
   settings.lastAlarmDay = -1;
   settings.rampMin      = 10;
@@ -111,6 +113,8 @@ static void sanitize() {
   if (settings.vibMode   < 0 || settings.vibMode   > 3)  bad = true;
   for (int i = 0; i < 3; i++)
     if (settings.vibDuty[i] < 0 || settings.vibDuty[i] > 100) bad = true;
+  if (settings.volStart < VOL_MIN_PCT || settings.volStart > 100 ||
+      settings.volMax   < settings.volStart || settings.volMax > 100) bad = true;
   if (settings.snoozeCount < 0) bad = true;
   if (!inList(settings.rampMin,   RAMP_OPTS, RAMP_MIN_COUNT))  bad = true;
   if (!inList(settings.chalTimeS, CHAL_OPTS, CHAL_TIME_COUNT)) bad = true;
@@ -163,6 +167,8 @@ void storageBegin() {
   settings.vibDuty[0]   = prefs.getInt ("vib_d0",        settings.vibDuty[0]);
   settings.vibDuty[1]   = prefs.getInt ("vib_d1",        settings.vibDuty[1]);
   settings.vibDuty[2]   = prefs.getInt ("vib_d2",        settings.vibDuty[2]);
+  settings.volStart     = prefs.getInt ("vol_start",     settings.volStart);
+  settings.volMax       = prefs.getInt ("vol_max",       settings.volMax);
   settings.snoozeCount  = prefs.getInt ("snooze_count",  settings.snoozeCount);
   settings.lastAlarmDay = prefs.getInt ("last_alarm_day", settings.lastAlarmDay);
   settings.rampMin      = prefs.getInt ("ramp_min",      settings.rampMin);
@@ -205,6 +211,8 @@ void storageSave() {
   prefs.putInt ("vib_d0",         settings.vibDuty[0]);
   prefs.putInt ("vib_d1",         settings.vibDuty[1]);
   prefs.putInt ("vib_d2",         settings.vibDuty[2]);
+  prefs.putInt ("vol_start",      settings.volStart);
+  prefs.putInt ("vol_max",        settings.volMax);
   prefs.putInt ("snooze_count",   settings.snoozeCount);
   prefs.putInt ("last_alarm_day", settings.lastAlarmDay);
   prefs.putInt ("ramp_min",       settings.rampMin);

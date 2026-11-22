@@ -166,6 +166,8 @@ static void handleState() {
   snprintf(buf, sizeof(buf), "\"vibD\":[%d,%d,%d],", settings.vibDuty[0],
            settings.vibDuty[1], settings.vibDuty[2]);
   o += buf;
+  snprintf(buf, sizeof(buf), "\"volS\":%d,\"volX\":%d,", settings.volStart, settings.volMax);
+  o += buf;
   o += "\"busy\":"; o += appAlarmBusy() ? "true" : "false";
   o += '}';
 
@@ -210,6 +212,11 @@ static void handleSave() {
   if (argInt("vibW",  0, 100, v)) s.vibDuty[0] = v;
   if (argInt("vibM",  0, 100, v)) s.vibDuty[1] = v;
   if (argInt("vibX",  0, 100, v)) s.vibDuty[2] = v;
+  if (argInt("volS",  VOL_MIN_PCT, 100, v)) s.volStart = v;
+  if (argInt("volX",  VOL_MIN_PCT, 100, v)) s.volMax   = v;
+  if (s.volMax < s.volStart) {
+    sendError(400, "Volume maximo menor que o inicial"); return;
+  }
   if (argInt("light", WIZ_DIM_MIN, 100, v)) s.lightPct = v;
   if (argInt("chal",  30, 120, v) && v % 30 == 0) s.chalTimeS = v;
   if (argInt("ramp",  5, 20, v)   && v % 5 == 0)  s.rampMin   = v;
@@ -312,6 +319,16 @@ static void handleMode() {
     sendError(409, "Alarme tocando: resolva o desafio primeiro");
     return;
   }
+  sendOk();
+}
+
+/* Toca 2 s a melodia do nivel (lvl=1 inicio, 4 fim) no volume pct, sem
+   salvar: da para ouvir e achar o ponto certo antes de gravar. */
+static void handleSoundTest() {
+  int lvl, pct;
+  if (!argInt("lvl", 1, 4, lvl))   { sendError(400, "lvl deve ser 1-4"); return; }
+  if (!argInt("pct", 0, 100, pct)) { sendError(400, "pct deve ser 0-100"); return; }
+  if (!appSoundTest(lvl, pct))     { sendError(409, "Alarme tocando"); return; }
   sendOk();
 }
 
@@ -420,6 +437,7 @@ void portalBegin() {
   server.on("/api/alarms",        HTTP_POST, handleAlarms);
   server.on("/api/mode",          HTTP_POST, handleMode);
   server.on("/api/vib/test",      HTTP_POST, handleVibTest);
+  server.on("/api/sound/test",    HTTP_POST, handleSoundTest);
   server.on("/api/scan",          HTTP_GET,  handleScan);
   server.on("/api/wifi",          HTTP_POST, handleWifi);
   server.on("/api/wifi/forget",   HTTP_POST, handleForget);

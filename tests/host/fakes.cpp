@@ -31,7 +31,7 @@ bool isTouched(int bx,int by,int bw,int bh,int tx,int ty){ return tx>=bx&&tx<bx+
 const char* g_vib="OFF"; int g_audio=0;
 void commBegin(){} void commPoll(){} void commSendLight(int){} void commSendVib(const char*m){g_vib=m;} void commSendVibDuty(int){}
 void commRequestStatus(){} void commSendAlarm(const char*){} bool commActuatorOnline(){return true;}
-void audioBegin(){} void audioSetLevel(int l){g_audio=l;} int audioGetLevel(){return g_audio;} void stopAudio(){g_audio=0;}
+void audioBegin(){} void audioSetLevel(int l){g_audio=l;} int audioGetLevel(){return g_audio;} void stopAudio(){g_audio=0;} void audioSetVolume(int,int){} void audioTest(int,int){g_audio=5;}
 // ---- net / portal
 void netBegin(){} void netUpdate(){} NetState netState(){return NET_CONNECTED;} bool netConnected(){return true;}
 bool netTimeSynced(){return false;} void netOpenPortal(){} void netClosePortal(){} bool netApActive(){return false;}
