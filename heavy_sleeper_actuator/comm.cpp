@@ -22,7 +22,7 @@ void commBegin() {
 
 /* Envia o estado atual da luz e da vibracao. */
 static void sendStatus() {
-  Serial2.printf("STATUS:LIGHT:%d,VIB:%s\n", lightTarget(), vibName());
+  Serial2.printf("STATUS:LIGHT:%d,VIB:%s,DUTY:%d\n", lightTarget(), vibName(), vibDuty());
 }
 
 /* Executa um comando do protocolo e responde. */
@@ -33,10 +33,14 @@ void parseCommand(String cmd) {
   Serial.printf("[COMM] rx: %s\n", cmd.c_str());
 
   if (cmd.startsWith("LIGHT:")) {
+#ifdef USE_MOSFET_LIGHT
     int pct = cmd.substring(6).toInt();
     pct = constrain(pct, 0, 100);
     setLight(pct);
     Serial2.printf("ACK:LIGHT:%d\n", pct);
+#else
+    Serial2.print(F("NACK:LIGHT_DISABLED\n"));   // luz agora e a lampada WiZ
+#endif
 
   } else if (cmd == "VIB:ON") {
     setVib(VIB_ON);
@@ -45,6 +49,11 @@ void parseCommand(String cmd) {
   } else if (cmd == "VIB:OFF") {
     setVib(VIB_OFF);
     Serial2.print(F("ACK:VIB:OFF\n"));
+
+  } else if (cmd.startsWith("VIB:DUTY:")) {
+    int pct = constrain(cmd.substring(9).toInt(), 0, 100);
+    setVibDuty(pct);
+    Serial2.printf("ACK:VIB:DUTY:%d\n", pct);
 
   } else if (cmd == "VIB:PULSE") {
     setVib(VIB_PULSE);

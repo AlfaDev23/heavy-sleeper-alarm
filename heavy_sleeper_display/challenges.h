@@ -47,6 +47,7 @@ struct Challenge {
   int  highlight;                  // botao destacado agora (-1 = nenhum)
 
   bool redraw;                     // ui precisa redesenhar
+  bool timedOut;                   // CHP_WRONG porque acabou o tempo do desafio
 };
 
 void challengeInit();                        // semeia o gerador aleatorio
@@ -54,6 +55,7 @@ void challengeStart(int type, int level);    // sorteia e arma um novo desafio
 void challengeUpdate();                      // avanca as fases (chame no loop)
 void challengeTouchIndex(int idx);           // registra toque no botao idx
 void challengeEarlyTap();                    // toque antes do estimulo (reacao)
+void challengeTimeout();                     // acabou o tempo total -> CHP_WRONG
 
 const Challenge& challengeCurrent();
 void challengeClearRedraw();                 // ui avisa que ja redesenhou
@@ -62,5 +64,13 @@ void challengeResetAttempts();
 
 const char* diffName(int level);             // "FACIL".."EXTREMO"
 const char* typeName(int type);              // "MATEMATICA".."REACAO"
+
+/* Sorteia um tipo entre os marcados em mask (bit ChalType). Com 2 ou mais
+   marcados, nunca repete o tipo anterior (avoid; -1 = sem restricao). */
+int challengePickType(int mask, int avoid);
+
+/* Texto dos tipos marcados: o nome inteiro se for um so, senao as siglas
+   ("MAT+MEM"). Buffer estatico. */
+const char* typeMaskName(int mask);
 
 #endif /* CHALLENGES_H */

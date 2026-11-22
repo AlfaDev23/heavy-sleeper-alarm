@@ -2,11 +2,12 @@
  * comm.cpp — Envio de comandos e leitura nao-bloqueante das respostas
  *            do Actuator ESP32.
  *
- * PINOS: TX = PIN_UART2_TX (IO16), RX = PIN_UART2_RX (IO22).
- *   Esses dois pinos sao, no board E32R28T, os LEDs Verde e Vermelho do
- *   LED RGB. Eles vao piscar junto com o trafego da UART — comportamento
- *   aceito de proposito. Consequencia: este arquivo NAO pode acionar IO16
- *   nem IO22 como LED. So o LED Azul (IO17) sobra para status.
+ * PINOS: TX = PIN_UART2_TX (IO27), RX = PIN_UART2_RX (IO22).
+ *   O IO27 e o CS do SPI periferico do board, livre para o firmware.
+ *   Ja o IO22 e, no E32R28T, o LED Vermelho do LED RGB: ele pisca junto
+ *   com o trafego recebido — comportamento aceito de proposito.
+ *   Consequencia: este arquivo NAO pode acionar IO22 como LED. O status
+ *   do link vai no LED Azul (IO17); o Verde (IO16) ficou livre na v0.3.
  */
 #include "comm.h"
 
@@ -109,6 +110,13 @@ void commSendLight(int percent) {
 void commSendVib(const char* mode) {
   Serial2.printf("VIB:%s\n", mode);
   Serial.printf("[COMM] tx: VIB:%s\n", mode);
+}
+
+/* Intensidade (PWM em %) usada pelos proximos VIB:ON / VIB:PULSE. */
+void commSendVibDuty(int percent) {
+  percent = constrain(percent, 0, 100);
+  Serial2.printf("VIB:DUTY:%d\n", percent);
+  Serial.printf("[COMM] tx: VIB:DUTY:%d\n", percent);
 }
 
 /* Pede o estado atual do Actuator. */

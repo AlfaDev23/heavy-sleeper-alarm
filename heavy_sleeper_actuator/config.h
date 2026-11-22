@@ -6,12 +6,20 @@
 
 #include <Arduino.h>
 
-#define FW_VERSION "0.2.0-alpha"
+#define FW_VERSION "0.4.1-alpha"
+
+/* ── Luz por MOSFET — RESERVADA ─────────────────────────────────────
+   Desde a v0.4 a luz do despertar e a lampada Wi-Fi WiZ, controlada pelo
+   Display. O canal de luz (GPIO32) ficou reservado para testes: com a
+   linha abaixo comentada o pino nao e configurado e o comando LIGHT:
+   responde NACK:LIGHT_DISABLED. Para reativar, descomente AQUI e no
+   config.h do Display.                                                 */
+// #define USE_MOSFET_LIGHT
 
 /* ── Pinos ──────────────────────────────────────────────────────── */
 #define PIN_UART2_RX 16   // recebe do Display ESP32
 #define PIN_UART2_TX 17   // envia ao Display ESP32
-#define PWM_LIGHT    32   // -> resistor 100-470R -> gate do MOSFET da luz
+#define PWM_LIGHT    32   // reservado: gate do MOSFET da luz (USE_MOSFET_LIGHT)
 #define PWM_VIB      33   // -> resistor 100-470R -> gate do MOSFET da vibracao
 #define LED_STATUS    2   // LED azul onboard
 
@@ -25,7 +33,10 @@
 #define VIB_FREQ   200    // motores vibracall respondem bem entre 100-300 Hz
 #define VIB_RES    8
 
-#define VIB_DUTY_ON  204  // 80% de 255
+/* Intensidade da vibracao em % (0-100). O Display manda VIB:DUTY:<n> antes
+   de cada VIB:ON / VIB:PULSE, com o valor configurado no portal para a
+   intensidade fraca / media / maxima. Este e so o valor ate o 1o comando. */
+#define VIB_DUTY_DEFAULT 80
 
 /* ── Rampa da luz (despertar gradual) ───────────────────────────── */
 #define LIGHT_RAMP_MS      30000   // atinge o alvo em 30 s

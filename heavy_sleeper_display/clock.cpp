@@ -9,7 +9,18 @@ TimeKeeper rtc;
 void TimeKeeper::begin(int h, int m, int s) {
   setTime(h, m, s);
   dayIndex   = 0;
+  synced     = false;
   lastTickMs = millis();
+}
+
+/* Acerto vindo do NTP (chamado pelo net.cpp a cada NTP_RESYNC_MS). */
+void TimeKeeper::syncTo(int h, int m, int s) {
+  long before = secondsOfDay();
+  setTime(h, m, s);
+  long after = secondsOfDay();
+  if (before - after > 12L * 3600L) dayIndex++;   // virou o dia no acerto
+  lastTickMs = millis();                          // segundo comeca agora
+  synced = true;
 }
 
 /* Ajusta a hora atual, normalizando os valores. */
