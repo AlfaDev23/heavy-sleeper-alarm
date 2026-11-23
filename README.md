@@ -1,4 +1,4 @@
-# Despertador Heavy Sleepers — v0.5.1-alpha
+# Despertador Heavy Sleepers — v0.5.2-alpha
 
 Despertador para quem tem sono pesado, com dois ESP32 conversando por UART.
 Combina luz gradual (lâmpada Wi-Fi WiZ), vibração, som crescente e desafios
@@ -436,6 +436,13 @@ POST /api/wiz/test        pisca a lâmpada
 - **Nenhum `delay()` no display.** Tudo é `millis()` e máquina de estados.
   O único ponto bloqueante é a task de áudio, isolada no **Core 0**; a UI
   fica no Core 1.
+- **Sem som, o DAC é desligado e o IO26 fica no terra** (v0.5.2). Neste
+  board o IO4 não cala o amplificador por completo, e o DAC parado no meio
+  da escala levava o ruído digital do próprio ESP32 ao alto-falante: um
+  zumbido com o alarme desligado, que mudava com a atividade da CPU (e
+  pausava enquanto a tela era redesenhada). Um teste na placa mostrou que
+  ele some com o IO26 solto ou no terra. Na hora de tocar o DAC volta; nas
+  duas trocas a tensão sobe/desce em rampa de ~50 ms para não dar "poc".
 - A task de áudio cede a CPU (`vTaskDelay(1)`) a cada ~100 ms de tom. Sem
   isso a IDLE0 morre de fome e o task watchdog reinicia o ESP32.
 - O backlight só é anexado ao LEDC **depois** de `tft.init()`, porque a
@@ -467,8 +474,10 @@ POST /api/wiz/test        pisca a lâmpada
   estão trocados ou invertidos. Se mesmo assim o toque cair no lugar errado,
   ajuste `touch.setRotation()` em `touch.cpp` (0–3) e recalibre — apagar a
   chave `touch_cal` da NVS força a rotina no próximo boot.
-- **Áudio:** se não sair som, confirme o `PIN_AMP_ENABLE` (IO4) indo a **LOW**
-  durante o alarme — é ele que habilita o amplificador do board.
+- **Áudio:** o `PIN_AMP_ENABLE` (IO4) não cala o amplificador por completo
+  neste board; quem tira o zumbido em repouso é o DAC aterrado (ver
+  Decisões de implementação). Se voltar algum ruído, o próximo passo é
+  conferir a fonte e o fio do alto-falante longe da antena do ESP32.
 - **O LED Vermelho pisca junto com a UART** (IO22, que é o RX2). É
   esperado, não é defeito: ver o aviso em `WIRING.md` §2.5. Desde a v0.3 o
   TX2 é o **IO27**, então o LED Verde (IO16) não pisca mais.

@@ -16,29 +16,69 @@
  * O enable/disable do amplificador e feito DENTRO da task de audio, no
  * mesmo ponto em que o nivel muda: assim o amp so fica ligado enquanto ha
  * som de verdade e nao ha corrida entre a UI e a geracao dos tons.
+ *
+ * ZUMBIDO EM REPOUSO (v0.5.2): neste board o IO4 nao cala o amplificador
+ * por completo, e o DAC parado no meio da escala carrega o ruido digital
+ * do proprio ESP32 (muda com a atividade da CPU; pausava quando a tela era
+ * redesenhada). Um teste na placa mostrou que o zumbido some com o IO26
+ * solto ou no terra. Por isso, sem som, o DAC e DESLIGADO e o IO26 fica em
+ * LOW (dacPark); para tocar ele volta (dacWake). Nas duas trocas a tensao
+ * desce/sobe em rampa (~50 ms) para nao dar "poc" no alto-falante.
  */
 #include "audio.h"
 
 static volatile int  gLevel   = 0;      // 0 = mudo; 1..4 = intensidade
 static TaskHandle_t  gTaskH   = NULL;
 static bool          gAmpOn   = false;  // espelho do estado de PIN_AMP_ENABLE
+static bool          gDacOn   = false;  // DAC ativo (true) ou IO26 no terra
 
-#define DAC_MID 128                      // meio da escala = silencio
+#define DAC_MID       128                // meio da escala = silencio
+#define DAC_RAMP_STEP 4                  // 128/4 = 32 passos ...
+#define DAC_RAMP_US   1500               // ... de 1,5 ms = ~50 ms de rampa
+
+/* Sem som: desce o DAC em rampa ate 0, desliga e prende o IO26 no terra. */
+static void dacPark() {
+  if (!gDacOn) return;
+  for (int v = DAC_MID; v > 0; v -= DAC_RAMP_STEP) {
+    dacWrite(PIN_DAC_AUDIO, v);
+    delayMicroseconds(DAC_RAMP_US);
+  }
+  dacWrite(PIN_DAC_AUDIO, 0);
+  dacDisable(PIN_DAC_AUDIO);
+  pinMode(PIN_DAC_AUDIO, OUTPUT);
+  digitalWrite(PIN_DAC_AUDIO, LOW);
+  gDacOn = false;
+}
+
+/* Antes de tocar: religa o DAC em 0 e sobe em rampa ate o meio. */
+static void dacWake() {
+  if (gDacOn) return;
+  dacWrite(PIN_DAC_AUDIO, 0);          // dacWrite() reconfigura o pino como DAC
+  for (int v = 0; v < DAC_MID; v += DAC_RAMP_STEP) {
+    dacWrite(PIN_DAC_AUDIO, v);
+    delayMicroseconds(DAC_RAMP_US);
+  }
+  dacWrite(PIN_DAC_AUDIO, DAC_MID);
+  gDacOn = true;
+}
 
 /* Liga o amplificador do board (LOW = habilitado). */
 void audioEnable() {
+  dacWake();
   if (gAmpOn) return;
   digitalWrite(PIN_AMP_ENABLE, LOW);
   gAmpOn = true;
 }
 
-/* Silencia o DAC e muta o amplificador (HIGH = desabilitado). */
+/* Silencia: muta o amplificador (HIGH) e aterra a saida do DAC. */
 void audioDisable() {
-  dacWrite(PIN_DAC_AUDIO, DAC_MID);   // silencio antes de cortar o amp
-  if (!gAmpOn) return;
-  delay(10);                          // deixa o DAC assentar, evita "poc"
-  digitalWrite(PIN_AMP_ENABLE, HIGH);
-  gAmpOn = false;
+  if (gAmpOn) {
+    if (gDacOn) dacWrite(PIN_DAC_AUDIO, DAC_MID);
+    delay(10);                          // deixa o DAC assentar, evita "poc"
+    digitalWrite(PIN_AMP_ENABLE, HIGH);
+    gAmpOn = false;
+  }
+  dacPark();                            // sem isso fica o zumbido em repouso
 }
 
 /* Amplitude (pico a pico) por nivel — funciona como "volume". Calculada
@@ -190,6 +230,7 @@ void audioBegin() {
   digitalWrite(PIN_AMP_ENABLE, HIGH);  // HIGH = amplificador mudo
   gAmpOn = false;
   dacWrite(PIN_DAC_AUDIO, DAC_MID);    // nivel medio = silencio DC
+  gDacOn = true;                       // a task aterra o DAC na 1a volta
   gLevel = 0;
   if (gTaskH == NULL) {
     xTaskCreatePinnedToCore(audioTask, "audio", 2560, NULL, 1, &gTaskH, 0);
@@ -226,11 +267,10 @@ int audioGetLevel() {
 }
 
 /*
- * Silencia o alarme. Zera o DAC na hora e deixa o corte do amplificador
- * para a task: assim o digitalWrite() do PIN_AMP_ENABLE acontece sempre
- * no mesmo contexto que gera o som, sem corrida com a UI.
+ * Silencia o alarme. So zera o nivel: a nota em andamento termina em
+ * milissegundos (levelChanged) e a task faz o resto (amp mudo e DAC no
+ * terra). Mexer no DAC aqui, do outro nucleo, religaria o DAC aterrado.
  */
 void stopAudio() {
   gLevel = 0;
-  dacWrite(PIN_DAC_AUDIO, DAC_MID);
 }

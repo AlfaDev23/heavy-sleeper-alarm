@@ -7,7 +7,7 @@
 
 #include <Arduino.h>
 
-#define FW_VERSION "0.5.1-alpha"
+#define FW_VERSION "0.5.2-alpha"
 
 /* ═══════════════════════════════════════════════════════════════════
    MODO DEMO x PRODUCAO
